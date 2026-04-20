@@ -21,8 +21,11 @@ package ca.ibodrov.concord.mcp;
  */
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.walmartlabs.concord.it.testingserver.TestingConcordServer;
 import java.net.ServerSocket;
 import java.net.URI;
@@ -44,6 +47,7 @@ public class HelloResourceLocalIT {
     private static PostgreSQLContainer<?> db;
     private static TestingConcordServer server;
     private static HttpClient client;
+    private static ObjectMapper objectMapper;
     private static int serverPort;
 
     @BeforeAll
@@ -57,6 +61,68 @@ public class HelloResourceLocalIT {
         server.start();
 
         client = HttpClient.newHttpClient();
+        objectMapper = new ObjectMapper();
+    }
+
+    @Test
+    void testMcpEndpointCreatesConcordEntities() throws Exception {
+        var initialize = postMcp(
+                "initialize",
+                Map.of(
+                        "protocolVersion",
+                        "2025-06-18",
+                        "clientInfo",
+                        Map.of("name", "concord-mcp-it", "version", "0.0.1")));
+        var initializeResult = object(initialize.get("result"));
+        assertEquals("2025-06-18", initializeResult.get("protocolVersion"));
+
+        var tools = postMcp("tools/list", Map.of());
+        assertTrue(
+                object(tools.get("result")).get("tools").toString().contains("concord_create_org"), tools.toString());
+
+        var org = callTool("concord_create_org", Map.of("name", "mcp-it-org"));
+        assertEquals("organization", org.get("entity"));
+        assertEquals("CREATED", org.get("result"));
+
+        var project = callTool(
+                "concord_create_project",
+                Map.of("orgName", "mcp-it-org", "name", "mcp-it-project", "description", "MCP integration test"));
+        assertEquals("project", project.get("entity"));
+        assertEquals("CREATED", project.get("result"));
+
+        var repository = callTool(
+                "concord_create_repository",
+                Map.of(
+                        "orgName",
+                        "mcp-it-org",
+                        "projectName",
+                        "mcp-it-project",
+                        "name",
+                        "mcp-it-repo",
+                        "url",
+                        "https://example.com/concord-mcp-it.git",
+                        "branch",
+                        "main",
+                        "disabled",
+                        true));
+        assertEquals("repository", repository.get("entity"));
+        assertEquals("CREATED", repository.get("result"));
+        assertEquals(true, repository.get("disabled"));
+
+        var secret = callTool(
+                "concord_create_data_secret",
+                Map.of(
+                        "orgName",
+                        "mcp-it-org",
+                        "name",
+                        "mcp-it-secret",
+                        "data",
+                        "secret-value",
+                        "projectNames",
+                        List.of("mcp-it-project")));
+        assertEquals("secret", secret.get("entity"));
+        assertEquals("DATA", secret.get("type"));
+        assertFalse(secret.toString().contains("secret-value"), secret.toString());
     }
 
     @AfterAll
@@ -89,6 +155,34 @@ public class HelloResourceLocalIT {
 
     private static List<Function<com.typesafe.config.Config, com.google.inject.Module>> createExtraModules() {
         return List.of(_cfg -> new PluginModule());
+    }
+
+    private static Map<String, Object> postMcp(String method, Map<String, Object> params) throws Exception {
+        var payload = Map.of("jsonrpc", "2.0", "id", method, "method", method, "params", params);
+        var request = HttpRequest.newBuilder()
+                .uri(URI.create(server.getApiBaseUrl() + "/api/v1/mcp"))
+                .header("Authorization", TEST_ADMIN_TOKEN)
+                .header("Accept", "application/json, text/event-stream")
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
+                .build();
+
+        var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode(), response.body());
+        return objectMapper.readValue(response.body(), new TypeReference<>() {});
+    }
+
+    private static Map<String, Object> callTool(String name, Map<String, Object> arguments) throws Exception {
+        var response = postMcp("tools/call", Map.of("name", name, "arguments", arguments));
+        assertFalse(response.containsKey("error"), response.toString());
+        var result = object(response.get("result"));
+        assertEquals(false, result.get("isError"), response.toString());
+        return object(result.get("structuredContent"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> object(Object value) {
+        return (Map<String, Object>) value;
     }
 
     private static int findFreePort() throws Exception {

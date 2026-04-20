@@ -1,0 +1,1 @@
+- Prefer Java `var` syntax.

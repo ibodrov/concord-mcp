@@ -20,18 +20,19 @@ package ca.ibodrov.concord.mcp;
  * ======
  */
 
-import static com.walmartlabs.concord.server.Utils.bindJaxRsResource;
+import java.util.Map;
 
-import com.google.inject.Binder;
-import com.google.inject.Module;
-import javax.inject.Named;
+record McpTool(String name, String description, Map<String, Object> inputSchema, Handler handler) {
 
-@Named
-public class PluginModule implements Module {
+    Map<String, Object> definition() {
+        return McpResource.orderedMap(
+                "name", name,
+                "description", description,
+                "inputSchema", inputSchema);
+    }
 
-    @Override
-    public void configure(Binder binder) {
-        bindJaxRsResource(binder, HelloResource.class);
-        bindJaxRsResource(binder, McpResource.class);
+    @FunctionalInterface
+    interface Handler {
+        Map<String, Object> call(Map<String, Object> arguments);
     }
 }

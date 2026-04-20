@@ -22,6 +22,8 @@ package ca.ibodrov.concord.mcp;
 
 import com.typesafe.config.Config;
 import com.walmartlabs.concord.it.testingserver.TestingConcordServer;
+import java.security.SecureRandom;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -29,7 +31,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 
 public class LocalServer {
 
-    private static final String TEST_ADMIN_TOKEN = "YWRtaW50b2s=";
+    private static final String ADMIN_TOKEN = randomToken();
     private static final int SERVER_PORT = Integer.getInteger("concord.mcp.serverPort", 8080);
 
     public static void main(String[] args) throws Exception {
@@ -53,6 +55,10 @@ public class LocalServer {
                         admin key: %s
 
                       curl -i -H 'Authorization: %s' http://localhost:%d/api/v1/mcp/hello
+                      curl -i -H 'Authorization: %s' \\
+                        -H 'Content-Type: application/json' \\
+                        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \\
+                        http://localhost:%d/api/v1/mcp
 
                     ==============================================================
                     %n""",
@@ -60,8 +66,10 @@ public class LocalServer {
                     db.getJdbcUrl(),
                     db.getUsername(),
                     db.getPassword(),
-                    TEST_ADMIN_TOKEN,
-                    TEST_ADMIN_TOKEN,
+                    ADMIN_TOKEN,
+                    ADMIN_TOKEN,
+                    SERVER_PORT,
+                    ADMIN_TOKEN,
                     SERVER_PORT);
 
             Thread.sleep(Long.MAX_VALUE);
@@ -69,10 +77,16 @@ public class LocalServer {
     }
 
     private static Map<String, Object> createConfig() {
-        return Map.of("db.changeLogParameters.defaultAdminToken", TEST_ADMIN_TOKEN);
+        return Map.of("db.changeLogParameters.defaultAdminToken", ADMIN_TOKEN);
     }
 
     private static List<Function<Config, com.google.inject.Module>> createExtraModules() {
         return List.of(_cfg -> new PluginModule());
+    }
+
+    private static String randomToken() {
+        var bytes = new byte[32];
+        new SecureRandom().nextBytes(bytes);
+        return Base64.getEncoder().encodeToString(bytes);
     }
 }
