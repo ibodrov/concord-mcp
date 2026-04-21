@@ -34,6 +34,7 @@ import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 import javax.ws.rs.core.Context;
+import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.StreamingOutput;
@@ -44,6 +45,8 @@ import javax.ws.rs.core.StreamingOutput;
 public class McpResource implements Resource {
 
     private static final String JSON_RPC_VERSION = "2.0";
+    private static final String ORIGIN_HEADER = "Origin";
+    private static final String X_ACCEL_BUFFERING_HEADER = "X-Accel-Buffering";
     private static final String DEFAULT_PROTOCOL_VERSION = "2025-06-18";
     private static final String SERVER_NAME = "concord-mcp-server";
     private static final String SERVER_VERSION = serverVersion();
@@ -61,7 +64,7 @@ public class McpResource implements Resource {
     public Response post(Map<String, Object> message, @Context HttpServletRequest request) {
         if (!isOriginAllowed(request)) {
             return Response.status(Response.Status.FORBIDDEN)
-                    .entity(error(null, -32000, "Forbidden Origin header"))
+                    .entity(JsonRpcErrorResponse.from(null, JsonRpcError.SERVER_ERROR, "Forbidden Origin header"))
                     .build();
         }
 
@@ -70,13 +73,15 @@ public class McpResource implements Resource {
 
         try {
             if (message == null || !JSON_RPC_VERSION.equals(message.get("jsonrpc"))) {
-                return Response.ok(error(id, -32600, "Invalid JSON-RPC request"))
+                return Response.ok(
+                                JsonRpcErrorResponse.from(id, JsonRpcError.INVALID_REQUEST, "Invalid JSON-RPC request"))
                         .build();
             }
 
             var method = asString(message.get("method"));
             if (method == null || method.isBlank()) {
-                return Response.ok(error(id, -32600, "JSON-RPC method is required"))
+                return Response.ok(JsonRpcErrorResponse.from(
+                                id, JsonRpcError.INVALID_REQUEST, "JSON-RPC method is required"))
                         .build();
             }
 
@@ -90,14 +95,14 @@ public class McpResource implements Resource {
                 return Response.ok(
                                 (StreamingOutput) out -> toolRegistry.streamTool(params, id, request, out),
                                 McpSseWriter.MEDIA_TYPE)
-                        .header("Cache-Control", "no-cache")
-                        .header("X-Accel-Buffering", "no")
+                        .header(HttpHeaders.CACHE_CONTROL, "no-cache")
+                        .header(X_ACCEL_BUFFERING_HEADER, "no")
                         .build();
             }
 
             var result =
                     switch (method) {
-                        case "initialize" -> initialize(params);
+                        case "initialize" -> InitializeResult.from(params);
                         case "ping" -> new EmptyResult();
                         case "logging/setLevel" -> new EmptyResult();
                         case "tools/list" -> toolRegistry.listTools();
@@ -106,15 +111,18 @@ public class McpResource implements Resource {
                     };
 
             if (result == null) {
-                return Response.ok(error(id, -32601, "Method not found: " + method))
+                return Response.ok(JsonRpcErrorResponse.from(
+                                id, JsonRpcError.METHOD_NOT_FOUND, "Method not found: " + method))
                         .build();
             }
 
-            return Response.ok(response(id, result)).build();
+            return Response.ok(JsonRpcResponse.success(id, result)).build();
         } catch (IllegalArgumentException e) {
-            return Response.ok(error(id, -32602, e.getMessage())).build();
+            return Response.ok(JsonRpcErrorResponse.from(id, JsonRpcError.INVALID_PARAMS, e.getMessage()))
+                    .build();
         } catch (Exception e) {
-            return Response.ok(error(id, -32603, "Internal error: " + e.getMessage()))
+            return Response.ok(JsonRpcErrorResponse.from(
+                            id, JsonRpcError.INTERNAL_ERROR, "Internal error: " + e.getMessage()))
                     .build();
         }
     }
@@ -135,33 +143,13 @@ public class McpResource implements Resource {
         }
     }
 
-    private static InitializeResult initialize(Map<String, Object> params) {
-        var requestedProtocolVersion = asString(params.get("protocolVersion"));
-        var protocolVersion = SUPPORTED_PROTOCOL_VERSIONS.contains(requestedProtocolVersion)
-                ? requestedProtocolVersion
-                : DEFAULT_PROTOCOL_VERSION;
-
-        return new InitializeResult(
-                protocolVersion,
-                new Capabilities(new ToolsCapability(false), new LoggingCapability()),
-                new ServerInfo(SERVER_NAME, SERVER_VERSION));
-    }
-
-    private static JsonRpcResponse response(Object id, Object result) {
-        return new JsonRpcResponse(JSON_RPC_VERSION, id, result);
-    }
-
-    private static JsonRpcErrorResponse error(Object id, int code, String message) {
-        return new JsonRpcErrorResponse(JSON_RPC_VERSION, id, new JsonRpcError(code, message));
-    }
-
     private static boolean isOriginAllowed(HttpServletRequest request) {
-        var origin = request.getHeader("Origin");
+        var origin = request.getHeader(ORIGIN_HEADER);
         if (origin == null || origin.isBlank()) {
             return true;
         }
 
-        var host = request.getHeader("Host");
+        var host = request.getHeader(HttpHeaders.HOST);
         if (host == null || host.isBlank()) {
             return false;
         }
@@ -184,7 +172,7 @@ public class McpResource implements Resource {
     }
 
     private static boolean acceptsEventStream(HttpServletRequest request) {
-        var accept = request.getHeader("Accept");
+        var accept = request.getHeader(HttpHeaders.ACCEPT);
         return accept != null && accept.toLowerCase(java.util.Locale.ROOT).contains(McpSseWriter.MEDIA_TYPE);
     }
 
@@ -219,7 +207,20 @@ public class McpResource implements Resource {
 
     private record EmptyResult() {}
 
-    private record InitializeResult(String protocolVersion, Capabilities capabilities, ServerInfo serverInfo) {}
+    private record InitializeResult(String protocolVersion, Capabilities capabilities, ServerInfo serverInfo) {
+
+        static InitializeResult from(Map<String, Object> params) {
+            var requestedProtocolVersion = asString(params.get("protocolVersion"));
+            var protocolVersion = SUPPORTED_PROTOCOL_VERSIONS.contains(requestedProtocolVersion)
+                    ? requestedProtocolVersion
+                    : DEFAULT_PROTOCOL_VERSION;
+
+            return new InitializeResult(
+                    protocolVersion,
+                    new Capabilities(new ToolsCapability(false), new LoggingCapability()),
+                    new ServerInfo(SERVER_NAME, SERVER_VERSION));
+        }
+    }
 
     private record Capabilities(ToolsCapability tools, LoggingCapability logging) {}
 
@@ -229,11 +230,28 @@ public class McpResource implements Resource {
 
     private record ServerInfo(String name, String version) {}
 
-    private record JsonRpcResponse(String jsonrpc, Object id, Object result) {}
+    private record JsonRpcResponse(String jsonrpc, Object id, Object result) {
 
-    private record JsonRpcErrorResponse(String jsonrpc, Object id, JsonRpcError error) {}
+        static JsonRpcResponse success(Object id, Object result) {
+            return new JsonRpcResponse(JSON_RPC_VERSION, id, result);
+        }
+    }
 
-    private record JsonRpcError(int code, String message) {}
+    private record JsonRpcErrorResponse(String jsonrpc, Object id, JsonRpcError error) {
+
+        static JsonRpcErrorResponse from(Object id, int code, String message) {
+            return new JsonRpcErrorResponse(JSON_RPC_VERSION, id, new JsonRpcError(code, message));
+        }
+    }
+
+    private record JsonRpcError(int code, String message) {
+
+        static final int SERVER_ERROR = -32000;
+        static final int INVALID_REQUEST = -32600;
+        static final int METHOD_NOT_FOUND = -32601;
+        static final int INVALID_PARAMS = -32602;
+        static final int INTERNAL_ERROR = -32603;
+    }
 
     static Map<String, Object> orderedMap(Object... values) {
         if (values.length % 2 != 0) {

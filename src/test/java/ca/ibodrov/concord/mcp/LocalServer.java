@@ -28,6 +28,8 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.MediaType;
 import org.testcontainers.containers.PostgreSQLContainer;
 
 public class LocalServer {
@@ -50,6 +52,9 @@ public class LocalServer {
                 agent.start();
             }
 
+            var authorizationHeader = HttpHeaders.AUTHORIZATION + ": " + ADMIN_TOKEN;
+            var contentTypeHeader = HttpHeaders.CONTENT_TYPE + ": " + MediaType.APPLICATION_JSON;
+
             System.out.printf(
                     """
                     ==============================================================
@@ -64,8 +69,9 @@ public class LocalServer {
                       Agent:
                         started: %s
 
-                      curl -i -H 'Authorization: %s' \\
-                        -H 'Content-Type: application/json' \\
+                      curl -i \\
+                        -H '%s' \\
+                        -H '%s' \\
                         -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \\
                         http://localhost:%d/api/v1/mcp
 
@@ -77,7 +83,8 @@ public class LocalServer {
                     db.getPassword(),
                     ADMIN_TOKEN,
                     START_AGENT,
-                    ADMIN_TOKEN,
+                    authorizationHeader,
+                    contentTypeHeader,
                     SERVER_PORT);
 
             Thread.sleep(Long.MAX_VALUE);

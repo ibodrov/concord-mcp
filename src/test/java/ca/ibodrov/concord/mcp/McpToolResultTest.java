@@ -24,14 +24,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.walmartlabs.concord.common.ObjectMapperProvider;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class McpToolResultTest {
 
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapperProvider().get();
+
     @Test
     void testStructuredContent() {
-        var result = McpToolResult.ok(Map.of("ok", true)).toResponse(new ObjectMapper());
+        var result = McpToolResult.ok(Map.of("ok", true)).toResponse(OBJECT_MAPPER);
 
         assertEquals(false, result.isError());
         assertEquals(Map.of("ok", true), result.structuredContent());
@@ -41,7 +44,7 @@ class McpToolResultTest {
     void testRecordStructuredContent() {
         var payload = new TestResult(true, "value", null);
 
-        var result = McpToolResult.ok(payload).toResponse(new ObjectMapper());
+        var result = McpToolResult.ok(payload).toResponse(OBJECT_MAPPER);
         var text = result.content().get(0).text();
 
         assertEquals("{\"ok\":true,\"value\":\"value\"}", text);

@@ -23,6 +23,7 @@ package ca.ibodrov.concord.mcp;
 import static com.walmartlabs.concord.sdk.MapUtils.getString;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.walmartlabs.concord.common.ObjectMapperProvider;
 import java.io.OutputStream;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,7 +34,8 @@ import javax.ws.rs.WebApplicationException;
 
 public class McpToolRegistry {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapperProvider().get();
+
     private final List<McpTool> tools;
     private final Map<String, McpTool> toolsByName;
 
@@ -261,12 +263,12 @@ public class McpToolRegistry {
 
         try {
             var arguments = asObject(params.get("arguments"));
-            return McpToolResult.ok(tool.handler().call(arguments, request)).toResponse(objectMapper);
+            return McpToolResult.ok(tool.handler().call(arguments, request)).toResponse(OBJECT_MAPPER);
         } catch (WebApplicationException | IllegalArgumentException e) {
-            return McpToolResult.error(e.getMessage()).toResponse(objectMapper);
+            return McpToolResult.error(e.getMessage()).toResponse(OBJECT_MAPPER);
         } catch (RuntimeException e) {
             return McpToolResult.error("Tool execution failed: " + e.getClass().getSimpleName())
-                    .toResponse(objectMapper);
+                    .toResponse(OBJECT_MAPPER);
         }
     }
 
@@ -277,7 +279,7 @@ public class McpToolRegistry {
     }
 
     void streamTool(Map<String, Object> params, Object id, HttpServletRequest request, OutputStream out) {
-        var writer = new McpSseWriter(out, objectMapper);
+        var writer = new McpSseWriter(out, OBJECT_MAPPER);
         Object result;
         try {
             var name = assertString(params, "name");
@@ -291,13 +293,13 @@ public class McpToolRegistry {
 
             var arguments = asObject(params.get("arguments"));
             result = McpToolResult.ok(tool.streamingHandler().call(arguments, request, writer))
-                    .toResponse(objectMapper);
+                    .toResponse(OBJECT_MAPPER);
         } catch (WebApplicationException | IllegalArgumentException e) {
-            result = McpToolResult.error(e.getMessage()).toResponse(objectMapper);
+            result = McpToolResult.error(e.getMessage()).toResponse(OBJECT_MAPPER);
         } catch (RuntimeException e) {
             result = McpToolResult.error(
                             "Tool execution failed: " + e.getClass().getSimpleName())
-                    .toResponse(objectMapper);
+                    .toResponse(OBJECT_MAPPER);
         }
         writer.sendFinalResponse(id, result);
     }

@@ -24,6 +24,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.walmartlabs.concord.common.ConfigurationUtils;
+import com.walmartlabs.concord.common.ObjectMapperProvider;
 import com.walmartlabs.concord.sdk.Constants;
 import com.walmartlabs.concord.server.org.OrganizationDao;
 import com.walmartlabs.concord.server.org.ResourceAccessLevel;
@@ -59,8 +60,8 @@ import javax.ws.rs.core.Response;
 class ConcordProcessTools {
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapperProvider().get();
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
     private final OrganizationDao orgDao;
     private final ProjectDao projectDao;
     private final RepositoryDao repositoryDao;
@@ -128,16 +129,8 @@ class ConcordProcessTools {
             var result = processManager.start(payload);
             var process = processQueueManager.get(PartialProcessKey.from(result.getInstanceId()));
 
-            return new ProcessStartResult(
-                    true,
-                    "process",
-                    "STARTED",
-                    result.getInstanceId().toString(),
-                    uuid(orgId),
-                    uuid(projectId),
-                    uuid(repoId),
-                    entryPoint,
-                    process != null ? process.status().name() : null);
+            return ProcessStartResult.started(
+                    result.getInstanceId().toString(), orgId, projectId, repoId, entryPoint, process);
         } catch (IOException e) {
             throw new ConcordApplicationException("Error while creating process payload: " + e.getMessage(), e);
         }
@@ -147,7 +140,7 @@ class ConcordProcessTools {
         var args = new ToolArguments(arguments);
         var instanceId = UUID.fromString(args.requireString("instanceId"));
         var process = assertProcess(instanceId);
-        return processResult(process);
+        return ProcessResult.from(process);
     }
 
     ProcessEntry assertProcess(UUID instanceId) {
@@ -164,7 +157,7 @@ class ConcordProcessTools {
         return process;
     }
 
-    private Map<String, Object> configuration(List<Part> parts) {
+    private static Map<String, Object> configuration(List<Part> parts) {
         var cfg = new LinkedHashMap<String, Object>();
         for (var part : parts) {
             if (!part.isTextPlain()) {
@@ -177,7 +170,7 @@ class ConcordProcessTools {
         return cfg;
     }
 
-    private Payload addAttachments(Payload payload, List<Part> parts) throws IOException {
+    private static Payload addAttachments(Payload payload, List<Part> parts) throws IOException {
         var attachments = new LinkedHashMap<String, Path>();
         var baseDir = payload.getHeader(Payload.BASE_DIR);
         if (baseDir == null) {
@@ -248,25 +241,25 @@ class ConcordProcessTools {
         return repoId;
     }
 
-    private String[] outExpressions(List<Part> parts) {
+    private static String[] outExpressions(List<Part> parts) {
         var value = stringPart(parts, Constants.Multipart.OUT_EXPR);
         return value != null ? value.split(",") : null;
     }
 
-    private Map<String, Object> meta(List<Part> parts) {
+    private static Map<String, Object> meta(List<Part> parts) {
         var value = stringPart(parts, Constants.Multipart.META);
         if (value == null) {
             return Collections.emptyMap();
         }
 
         try {
-            return value.isBlank() ? Collections.emptyMap() : objectMapper.readValue(value, MAP_TYPE);
+            return value.isBlank() ? Collections.emptyMap() : OBJECT_MAPPER.readValue(value, MAP_TYPE);
         } catch (IOException e) {
             throw new IllegalArgumentException("'meta' must be a JSON object");
         }
     }
 
-    private UUID uuidPart(List<Part> parts, String name) {
+    private static UUID uuidPart(List<Part> parts, String name) {
         var value = stringPart(parts, name);
         if (value == null) {
             return null;
@@ -289,7 +282,7 @@ class ConcordProcessTools {
     }
 
     @SuppressWarnings("unchecked")
-    private List<Part> parseParts(Object value) {
+    private static List<Part> parseParts(Object value) {
         if (!(value instanceof List<?> list)) {
             throw new IllegalArgumentException("'parts' must be an array");
         }
@@ -354,40 +347,6 @@ class ConcordProcessTools {
         throw new IllegalArgumentException("Part '" + name + "' must be a string");
     }
 
-    private static ProcessResult processResult(ProcessEntry process) {
-        return new ProcessResult(
-                true,
-                "process",
-                process.instanceId().toString(),
-                process.status().name(),
-                process.kind().name(),
-                time(process.createdAt()),
-                time(process.startAt()),
-                time(process.lastUpdatedAt()),
-                time(process.lastRunAt()),
-                process.totalRuntimeMs(),
-                uuid(process.orgId()),
-                process.orgName(),
-                uuid(process.projectId()),
-                process.projectName(),
-                uuid(process.repoId()),
-                process.repoName(),
-                process.repoPath(),
-                process.commitId(),
-                process.commitBranch(),
-                process.runtime(),
-                process.initiator(),
-                uuid(process.initiatorId()));
-    }
-
-    private static String uuid(UUID value) {
-        return value != null ? value.toString() : null;
-    }
-
-    private static String time(Object value) {
-        return value != null ? value.toString() : null;
-    }
-
     @JsonInclude(JsonInclude.Include.NON_NULL)
     record ProcessStartResult(
             boolean ok,
@@ -398,7 +357,27 @@ class ConcordProcessTools {
             String projectId,
             String repositoryId,
             String entryPoint,
-            String status) {}
+            String status) {
+
+        static ProcessStartResult started(
+                String instanceId, UUID orgId, UUID projectId, UUID repoId, String entryPoint, ProcessEntry process) {
+
+            return new ProcessStartResult(
+                    true,
+                    "process",
+                    "STARTED",
+                    instanceId,
+                    uuid(orgId),
+                    uuid(projectId),
+                    uuid(repoId),
+                    entryPoint,
+                    process != null ? process.status().name() : null);
+        }
+
+        private static String uuid(UUID value) {
+            return value != null ? value.toString() : null;
+        }
+    }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     record ProcessResult(
@@ -423,7 +402,42 @@ class ConcordProcessTools {
             String commitBranch,
             String runtime,
             String initiator,
-            String initiatorId) {}
+            String initiatorId) {
+
+        static ProcessResult from(ProcessEntry process) {
+            return new ProcessResult(
+                    true,
+                    "process",
+                    process.instanceId().toString(),
+                    process.status().name(),
+                    process.kind().name(),
+                    time(process.createdAt()),
+                    time(process.startAt()),
+                    time(process.lastUpdatedAt()),
+                    time(process.lastRunAt()),
+                    process.totalRuntimeMs(),
+                    uuid(process.orgId()),
+                    process.orgName(),
+                    uuid(process.projectId()),
+                    process.projectName(),
+                    uuid(process.repoId()),
+                    process.repoName(),
+                    process.repoPath(),
+                    process.commitId(),
+                    process.commitBranch(),
+                    process.runtime(),
+                    process.initiator(),
+                    uuid(process.initiatorId()));
+        }
+
+        private static String uuid(UUID value) {
+            return value != null ? value.toString() : null;
+        }
+
+        private static String time(Object value) {
+            return value != null ? value.toString() : null;
+        }
+    }
 
     private record Part(String name, MediaType mediaType, byte[] data) {
 

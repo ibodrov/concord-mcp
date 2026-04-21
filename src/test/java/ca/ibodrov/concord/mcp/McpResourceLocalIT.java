@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.walmartlabs.concord.common.ObjectMapperProvider;
 import com.walmartlabs.concord.it.testingserver.TestingConcordAgent;
 import com.walmartlabs.concord.it.testingserver.TestingConcordServer;
 import com.walmartlabs.concord.server.sdk.ProcessStatus;
@@ -45,6 +46,8 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.MediaType;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -75,7 +78,7 @@ public class McpResourceLocalIT {
         agent.start();
 
         client = HttpClient.newHttpClient();
-        objectMapper = new ObjectMapper();
+        objectMapper = new ObjectMapperProvider().get();
     }
 
     @Test
@@ -238,9 +241,9 @@ public class McpResourceLocalIT {
         var payload = Map.of("jsonrpc", "2.0", "id", method, "method", method, "params", params);
         var request = HttpRequest.newBuilder()
                 .uri(URI.create(server.getApiBaseUrl() + "/api/v1/mcp"))
-                .header("Authorization", TEST_ADMIN_TOKEN)
-                .header("Accept", accept)
-                .header("Content-Type", "application/json")
+                .header(HttpHeaders.AUTHORIZATION, TEST_ADMIN_TOKEN)
+                .header(HttpHeaders.ACCEPT, accept)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON)
                 .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
                 .build();
 

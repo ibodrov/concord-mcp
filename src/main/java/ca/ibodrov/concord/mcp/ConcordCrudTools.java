@@ -198,8 +198,8 @@ class ConcordCrudTools {
                 visibility,
                 storeType);
 
-        return secretResult(
-                org, args.requireString("name"), "DATA", created.getId(), visibility, storeType, projectIds);
+        return SecretResult.created(
+                org, args.requireString("name"), "DATA", created.getId(), visibility, storeType, projectIds, null);
     }
 
     SecretResult createUsernamePasswordSecret(Map<String, Object> arguments) {
@@ -220,14 +220,15 @@ class ConcordCrudTools {
                 visibility,
                 storeType);
 
-        return secretResult(
+        return SecretResult.created(
                 org,
                 args.requireString("name"),
                 "USERNAME_PASSWORD",
                 created.getId(),
                 visibility,
                 storeType,
-                projectIds);
+                projectIds,
+                null);
     }
 
     SecretResult createKeyPairSecret(Map<String, Object> arguments) {
@@ -239,17 +240,14 @@ class ConcordCrudTools {
 
         var created = createKeyPairSecret(args, org.getId(), projectIds, visibility, storeType);
 
-        return new SecretResult(
-                true,
-                "secret",
-                OperationResult.CREATED.name(),
-                org.getName(),
-                created.getId().toString(),
+        return SecretResult.created(
+                org,
                 args.requireString("name"),
                 "KEY_PAIR",
-                visibility.name(),
+                created.getId(),
+                visibility,
                 storeType,
-                projectIdsResult(projectIds),
+                projectIds,
                 new String(created.getData(), StandardCharsets.UTF_8));
     }
 
@@ -316,35 +314,6 @@ class ConcordCrudTools {
         return args.optionalEnum("visibility", SecretVisibility.class, SecretVisibility.PUBLIC);
     }
 
-    private static SecretResult secretResult(
-            OrganizationEntry org,
-            String name,
-            String type,
-            UUID secretId,
-            SecretVisibility visibility,
-            String storeType,
-            Set<UUID> projectIds) {
-
-        return new SecretResult(
-                true,
-                "secret",
-                OperationResult.CREATED.name(),
-                org.getName(),
-                secretId.toString(),
-                name,
-                type,
-                visibility.name(),
-                storeType,
-                projectIdsResult(projectIds),
-                null);
-    }
-
-    private static List<String> projectIdsResult(Set<UUID> projectIds) {
-        return projectIds == null
-                ? null
-                : projectIds.stream().map(UUID::toString).toList();
-    }
-
     @JsonInclude(JsonInclude.Include.NON_NULL)
     record OrganizationResult(boolean ok, String entity, String result, String orgId, String name, String visibility) {}
 
@@ -384,5 +353,36 @@ class ConcordCrudTools {
             String visibility,
             String storeType,
             List<String> projectIds,
-            String publicKey) {}
+            String publicKey) {
+
+        static SecretResult created(
+                OrganizationEntry org,
+                String name,
+                String type,
+                UUID secretId,
+                SecretVisibility visibility,
+                String storeType,
+                Set<UUID> projectIds,
+                String publicKey) {
+
+            return new SecretResult(
+                    true,
+                    "secret",
+                    OperationResult.CREATED.name(),
+                    org.getName(),
+                    secretId.toString(),
+                    name,
+                    type,
+                    visibility.name(),
+                    storeType,
+                    projectIds(projectIds),
+                    publicKey);
+        }
+
+        private static List<String> projectIds(Set<UUID> projectIds) {
+            return projectIds == null
+                    ? null
+                    : projectIds.stream().map(UUID::toString).toList();
+        }
+    }
 }

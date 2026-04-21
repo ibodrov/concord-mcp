@@ -86,7 +86,7 @@ class ConcordLogTools {
                 .filter(segment -> includeSystem || segment.id() != 0)
                 .skip(offset)
                 .limit(limit)
-                .map(ConcordLogTools::segmentResult)
+                .map(ProcessLogSegmentInfo::from)
                 .toList();
 
         return new ProcessLogSegmentsResult(true, "processLogSegments", instanceId.toString(), offset, limit, segments);
@@ -353,18 +353,6 @@ class ConcordLogTools {
         return TERMINAL_STATUSES.contains(process.status());
     }
 
-    private static ProcessLogSegmentInfo segmentResult(LogSegment segment) {
-        return new ProcessLogSegmentInfo(
-                segment.id(),
-                segment.correlationId() != null ? segment.correlationId().toString() : null,
-                segment.name(),
-                segment.status() != null ? segment.status().name() : null,
-                segment.createdAt() != null ? segment.createdAt().toString() : null,
-                segment.statusUpdatedAt() != null ? segment.statusUpdatedAt().toString() : null,
-                segment.warnings(),
-                segment.errors());
-    }
-
     private static byte[] clip(ProcessLogChunk chunk, int requestedStart, int requestedEnd) {
         return clip(chunk.getStart(), chunk.getData(), requestedStart, requestedEnd);
     }
@@ -502,7 +490,22 @@ class ConcordLogTools {
             String createdAt,
             String statusUpdatedAt,
             Integer warnings,
-            Integer errors) {}
+            Integer errors) {
+
+        static ProcessLogSegmentInfo from(LogSegment segment) {
+            return new ProcessLogSegmentInfo(
+                    segment.id(),
+                    segment.correlationId() != null ? segment.correlationId().toString() : null,
+                    segment.name(),
+                    segment.status() != null ? segment.status().name() : null,
+                    segment.createdAt() != null ? segment.createdAt().toString() : null,
+                    segment.statusUpdatedAt() != null
+                            ? segment.statusUpdatedAt().toString()
+                            : null,
+                    segment.warnings(),
+                    segment.errors());
+        }
+    }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     record ProcessLogSegmentResult(
