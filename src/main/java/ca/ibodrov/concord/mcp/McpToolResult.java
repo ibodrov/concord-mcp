@@ -23,41 +23,41 @@ package ca.ibodrov.concord.mcp;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
-import java.util.Map;
 
 final class McpToolResult {
 
     private final boolean error;
-    private final Map<String, Object> structuredContent;
+    private final Object structuredContent;
 
-    private McpToolResult(boolean error, Map<String, Object> structuredContent) {
+    private McpToolResult(boolean error, Object structuredContent) {
         this.error = error;
         this.structuredContent = structuredContent;
     }
 
-    static McpToolResult ok(Map<String, Object> structuredContent) {
+    static McpToolResult ok(Object structuredContent) {
         return new McpToolResult(false, structuredContent);
     }
 
     static McpToolResult error(String message) {
-        return new McpToolResult(true, McpResource.orderedMap("ok", false, "error", message));
+        return new McpToolResult(true, new ErrorResult(false, message));
     }
 
-    Map<String, Object> toResponse(ObjectMapper objectMapper) {
-        return McpResource.orderedMap(
-                "content",
-                List.of(McpResource.orderedMap("type", "text", "text", toJson(objectMapper, structuredContent))),
-                "structuredContent",
-                structuredContent,
-                "isError",
-                error);
+    ToolCallResult toResponse(ObjectMapper objectMapper) {
+        return new ToolCallResult(
+                List.of(new ContentBlock("text", toJson(objectMapper, structuredContent))), structuredContent, error);
     }
 
-    private static String toJson(ObjectMapper objectMapper, Map<String, Object> value) {
+    private static String toJson(ObjectMapper objectMapper, Object value) {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Error while serializing MCP tool result", e);
         }
     }
+
+    record ToolCallResult(List<ContentBlock> content, Object structuredContent, boolean isError) {}
+
+    record ContentBlock(String type, String text) {}
+
+    record ErrorResult(boolean ok, String error) {}
 }

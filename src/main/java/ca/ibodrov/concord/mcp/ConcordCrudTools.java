@@ -20,6 +20,7 @@ package ca.ibodrov.concord.mcp;
  * ======
  */
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.walmartlabs.concord.server.OperationResult;
 import com.walmartlabs.concord.server.jooq.enums.OutVariablesMode;
 import com.walmartlabs.concord.server.jooq.enums.ProcessExecMode;
@@ -43,14 +44,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import javax.inject.Inject;
-import javax.inject.Singleton;
 import javax.ws.rs.core.Response;
 
-@Singleton
 class ConcordCrudTools {
 
     private final OrganizationManager orgManager;
@@ -77,7 +77,7 @@ class ConcordCrudTools {
         this.secretManager = secretManager;
     }
 
-    Map<String, Object> createOrg(Map<String, Object> arguments) {
+    OrganizationResult createOrg(Map<String, Object> arguments) {
         var args = new ToolArguments(arguments);
         var name = args.requireString("name");
         var visibility = args.optionalEnum("visibility", OrganizationVisibility.class, OrganizationVisibility.PUBLIC);
@@ -86,22 +86,11 @@ class ConcordCrudTools {
                 null, name, null, visibility, args.optionalObject("meta"), args.optionalObject("cfg"));
         var result = orgManager.createOrUpdate(entry);
 
-        return McpResource.orderedMap(
-                "ok",
-                true,
-                "entity",
-                "organization",
-                "result",
-                result.result().name(),
-                "orgId",
-                result.orgId().toString(),
-                "name",
-                name,
-                "visibility",
-                visibility.name());
+        return new OrganizationResult(
+                true, "organization", result.result().name(), result.orgId().toString(), name, visibility.name());
     }
 
-    Map<String, Object> createProject(Map<String, Object> arguments) {
+    ProjectResult createProject(Map<String, Object> arguments) {
         var args = new ToolArguments(arguments);
         var orgName = args.requireString("orgName");
         var name = args.requireString("name");
@@ -124,24 +113,17 @@ class ConcordCrudTools {
                 null);
         var result = projectManager.createOrUpdate(orgName, entry);
 
-        return McpResource.orderedMap(
-                "ok",
+        return new ProjectResult(
                 true,
-                "entity",
                 "project",
-                "result",
                 result.result().name(),
-                "orgName",
                 orgName,
-                "projectId",
                 result.projectId().toString(),
-                "name",
                 name,
-                "visibility",
                 visibility.name());
     }
 
-    Map<String, Object> createRepository(Map<String, Object> arguments) {
+    RepositoryResult createRepository(Map<String, Object> arguments) {
         var args = new ToolArguments(arguments);
         var orgName = args.requireString("orgName");
         var projectName = args.requireString("projectName");
@@ -179,21 +161,21 @@ class ConcordCrudTools {
         var saved = repositoryManager.get(projectId, name);
         var result = existingRepoId == null ? OperationResult.CREATED : OperationResult.UPDATED;
 
-        return McpResource.orderedMap(
-                "ok", true,
-                "entity", "repository",
-                "result", result.name(),
-                "orgName", orgName,
-                "projectName", projectName,
-                "repositoryId", saved.getId().toString(),
-                "name", saved.getName(),
-                "url", saved.getUrl(),
-                "branch", saved.getBranch(),
-                "path", saved.getPath(),
-                "disabled", saved.isDisabled());
+        return new RepositoryResult(
+                true,
+                "repository",
+                result.name(),
+                orgName,
+                projectName,
+                saved.getId().toString(),
+                saved.getName(),
+                saved.getUrl(),
+                saved.getBranch(),
+                saved.getPath(),
+                saved.isDisabled());
     }
 
-    Map<String, Object> createDataSecret(Map<String, Object> arguments) {
+    SecretResult createDataSecret(Map<String, Object> arguments) {
         var args = new ToolArguments(arguments);
         var data = args.optionalString("data");
         var dataBase64 = args.optionalString("dataBase64");
@@ -220,7 +202,7 @@ class ConcordCrudTools {
                 org, args.requireString("name"), "DATA", created.getId(), visibility, storeType, projectIds);
     }
 
-    Map<String, Object> createUsernamePasswordSecret(Map<String, Object> arguments) {
+    SecretResult createUsernamePasswordSecret(Map<String, Object> arguments) {
         var args = new ToolArguments(arguments);
         var org = orgManager.assertAccess(args.requireString("orgName"), true);
         var projectIds = projectIds(org.getId(), args);
@@ -248,7 +230,7 @@ class ConcordCrudTools {
                 projectIds);
     }
 
-    Map<String, Object> createKeyPairSecret(Map<String, Object> arguments) {
+    SecretResult createKeyPairSecret(Map<String, Object> arguments) {
         var args = new ToolArguments(arguments);
         var org = orgManager.assertAccess(args.requireString("orgName"), true);
         var projectIds = projectIds(org.getId(), args);
@@ -257,30 +239,17 @@ class ConcordCrudTools {
 
         var created = createKeyPairSecret(args, org.getId(), projectIds, visibility, storeType);
 
-        return McpResource.orderedMap(
-                "ok",
+        return new SecretResult(
                 true,
-                "entity",
                 "secret",
-                "result",
                 OperationResult.CREATED.name(),
-                "orgName",
                 org.getName(),
-                "secretId",
                 created.getId().toString(),
-                "name",
                 args.requireString("name"),
-                "type",
                 "KEY_PAIR",
-                "visibility",
                 visibility.name(),
-                "storeType",
                 storeType,
-                "projectIds",
-                projectIds == null
-                        ? null
-                        : projectIds.stream().map(UUID::toString).toList(),
-                "publicKey",
+                projectIdsResult(projectIds),
                 new String(created.getData(), StandardCharsets.UTF_8));
     }
 
@@ -347,7 +316,7 @@ class ConcordCrudTools {
         return args.optionalEnum("visibility", SecretVisibility.class, SecretVisibility.PUBLIC);
     }
 
-    private static Map<String, Object> secretResult(
+    private static SecretResult secretResult(
             OrganizationEntry org,
             String name,
             String type,
@@ -356,28 +325,64 @@ class ConcordCrudTools {
             String storeType,
             Set<UUID> projectIds) {
 
-        return McpResource.orderedMap(
-                "ok",
+        return new SecretResult(
                 true,
-                "entity",
                 "secret",
-                "result",
                 OperationResult.CREATED.name(),
-                "orgName",
                 org.getName(),
-                "secretId",
                 secretId.toString(),
-                "name",
                 name,
-                "type",
                 type,
-                "visibility",
                 visibility.name(),
-                "storeType",
                 storeType,
-                "projectIds",
-                projectIds == null
-                        ? null
-                        : projectIds.stream().map(UUID::toString).toList());
+                projectIdsResult(projectIds),
+                null);
     }
+
+    private static List<String> projectIdsResult(Set<UUID> projectIds) {
+        return projectIds == null
+                ? null
+                : projectIds.stream().map(UUID::toString).toList();
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record OrganizationResult(boolean ok, String entity, String result, String orgId, String name, String visibility) {}
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record ProjectResult(
+            boolean ok,
+            String entity,
+            String result,
+            String orgName,
+            String projectId,
+            String name,
+            String visibility) {}
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record RepositoryResult(
+            boolean ok,
+            String entity,
+            String result,
+            String orgName,
+            String projectName,
+            String repositoryId,
+            String name,
+            String url,
+            String branch,
+            String path,
+            boolean disabled) {}
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record SecretResult(
+            boolean ok,
+            String entity,
+            String result,
+            String orgName,
+            String secretId,
+            String name,
+            String type,
+            String visibility,
+            String storeType,
+            List<String> projectIds,
+            String publicKey) {}
 }

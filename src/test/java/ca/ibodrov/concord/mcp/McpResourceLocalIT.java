@@ -22,43 +22,57 @@ package ca.ibodrov.concord.mcp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.walmartlabs.concord.it.testingserver.TestingConcordAgent;
 import com.walmartlabs.concord.it.testingserver.TestingConcordServer;
+import com.walmartlabs.concord.server.sdk.ProcessStatus;
+import java.io.ByteArrayOutputStream;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
 
-public class HelloResourceLocalIT {
+public class McpResourceLocalIT {
 
     private static final String TEST_ADMIN_TOKEN = "YWRtaW50b2s=";
+    private static final EnumSet<ProcessStatus> TERMINAL_STATUSES =
+            EnumSet.of(ProcessStatus.FINISHED, ProcessStatus.FAILED, ProcessStatus.CANCELLED, ProcessStatus.TIMED_OUT);
 
     private static PostgreSQLContainer<?> db;
     private static TestingConcordServer server;
+    private static TestingConcordAgent agent;
     private static HttpClient client;
     private static ObjectMapper objectMapper;
-    private static int serverPort;
 
     @BeforeAll
     static void setUp() throws Exception {
-        serverPort = findFreePort();
+        int serverPort = findFreePort();
 
         db = new PostgreSQLContainer<>("postgres:15-alpine");
         db.start();
 
         server = new TestingConcordServer(db, serverPort, createConfig(), createExtraModules());
         server.start();
+        agent = new TestingConcordAgent(server, TestingAgentSupport.agentConfig(), List.of());
+        agent.start();
 
         client = HttpClient.newHttpClient();
         objectMapper = new ObjectMapper();
@@ -125,28 +139,80 @@ public class HelloResourceLocalIT {
         assertFalse(secret.toString().contains("secret-value"), secret.toString());
     }
 
+    @Test
+    void testMcpEndpointStartsProcessAndReadsLogs() throws Exception {
+        var archive = zipBase64(
+                Map.of(
+                        "concord.yml",
+                        """
+                configuration:
+                  runtime: concord-v2
+                flows:
+                  default:
+                    - log: "hello ${name.first} ${name.last}"
+                """));
+        var requestJson = objectMapper.writeValueAsString(
+                Map.of("arguments", Map.of("name", Map.of("first", "Ada", "last", "Lovelace"))));
+
+        var started = callTool(
+                "concord_start_process",
+                Map.of(
+                        "parts",
+                        List.of(
+                                Map.of(
+                                        "name", "archive",
+                                        "contentType", "application/zip",
+                                        "base64", archive),
+                                Map.of(
+                                        "name", "request",
+                                        "contentType", "application/json",
+                                        "text", requestJson))));
+
+        var instanceId = (String) started.get("instanceId");
+        assertNotNull(instanceId);
+
+        var process = waitForTerminalProcess(instanceId);
+        assertEquals(ProcessStatus.FINISHED.name(), process.get("status"), process.toString());
+
+        var segments = callTool(
+                "concord_list_process_log_segments",
+                Map.of("instanceId", instanceId, "includeSystem", true, "limit", 20));
+        assertFalse(list(segments.get("segments")).isEmpty(), segments.toString());
+
+        var rawLog = callTool(
+                "concord_read_process_log",
+                Map.of("instanceId", instanceId, "format", "raw", "startOffset", 0, "maxBytes", 65536));
+        assertTrue(rawLog.get("text").toString().contains("hello Ada Lovelace"), rawLog.toString());
+
+        var prefixedLog = callTool(
+                "concord_read_process_log",
+                Map.of("instanceId", instanceId, "format", "prefixed", "startOffset", 0, "maxBytes", 65536));
+        assertTrue(prefixedLog.get("text").toString().contains("hello Ada Lovelace"), prefixedLog.toString());
+
+        var sse = postMcpSse(
+                "tools/call",
+                Map.of(
+                        "name",
+                        "concord_stream_process_log",
+                        "arguments",
+                        Map.of("instanceId", instanceId, "startOffset", 0, "follow", false, "maxBytesPerPoll", 65536)));
+        assertEquals(200, sse.statusCode(), sse.body());
+        assertTrue(sse.body().contains("notifications/message"), sse.body());
+        assertTrue(sse.body().contains("hello Ada Lovelace"), sse.body());
+        assertTrue(sse.body().contains("\"result\""), sse.body());
+    }
+
     @AfterAll
     static void tearDown() throws Exception {
+        if (agent != null) {
+            agent.close();
+        }
         if (server != null) {
             server.close();
         }
         if (db != null) {
             db.close();
         }
-    }
-
-    @Test
-    void testPluginResourceLoads() throws Exception {
-        var request = HttpRequest.newBuilder()
-                .uri(URI.create(server.getApiBaseUrl() + "/api/v1/mcp/hello"))
-                .header("Authorization", TEST_ADMIN_TOKEN)
-                .GET()
-                .build();
-
-        var response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-        assertEquals(200, response.statusCode(), response.body());
-        assertTrue(response.body().contains("\"message\":\"" + HelloResource.MESSAGE + "\""), response.body());
     }
 
     private static Map<String, Object> createConfig() {
@@ -158,18 +224,27 @@ public class HelloResourceLocalIT {
     }
 
     private static Map<String, Object> postMcp(String method, Map<String, Object> params) throws Exception {
+        var response = postMcpRaw(method, params, "application/json, text/event-stream");
+        assertEquals(200, response.statusCode(), response.body());
+        return objectMapper.readValue(response.body(), new TypeReference<>() {});
+    }
+
+    private static HttpResponse<String> postMcpSse(String method, Map<String, Object> params) throws Exception {
+        return postMcpRaw(method, params, "text/event-stream");
+    }
+
+    private static HttpResponse<String> postMcpRaw(String method, Map<String, Object> params, String accept)
+            throws Exception {
         var payload = Map.of("jsonrpc", "2.0", "id", method, "method", method, "params", params);
         var request = HttpRequest.newBuilder()
                 .uri(URI.create(server.getApiBaseUrl() + "/api/v1/mcp"))
                 .header("Authorization", TEST_ADMIN_TOKEN)
-                .header("Accept", "application/json, text/event-stream")
+                .header("Accept", accept)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
                 .build();
 
-        var response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode(), response.body());
-        return objectMapper.readValue(response.body(), new TypeReference<>() {});
+        return client.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
     private static Map<String, Object> callTool(String name, Map<String, Object> arguments) throws Exception {
@@ -180,9 +255,39 @@ public class HelloResourceLocalIT {
         return object(result.get("structuredContent"));
     }
 
+    private static Map<String, Object> waitForTerminalProcess(String instanceId) throws Exception {
+        for (var i = 0; i < 60; i++) {
+            var process = callTool("concord_get_process", Map.of("instanceId", instanceId));
+            var status = ProcessStatus.valueOf(process.get("status").toString());
+            if (TERMINAL_STATUSES.contains(status)) {
+                return process;
+            }
+            Thread.sleep(1000);
+        }
+        fail("Timed out waiting for process " + instanceId);
+        return Map.of();
+    }
+
+    private static String zipBase64(Map<String, String> files) throws Exception {
+        var out = new ByteArrayOutputStream();
+        try (var zip = new ZipOutputStream(out, StandardCharsets.UTF_8)) {
+            for (var entry : files.entrySet()) {
+                zip.putNextEntry(new ZipEntry(entry.getKey()));
+                zip.write(entry.getValue().getBytes(StandardCharsets.UTF_8));
+                zip.closeEntry();
+            }
+        }
+        return Base64.getEncoder().encodeToString(out.toByteArray());
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> object(Object value) {
         return (Map<String, Object>) value;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Object> list(Object value) {
+        return (List<Object>) value;
     }
 
     private static int findFreePort() throws Exception {

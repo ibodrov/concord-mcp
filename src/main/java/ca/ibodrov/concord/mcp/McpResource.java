@@ -26,7 +26,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import javax.inject.Inject;
-import javax.inject.Singleton;
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
@@ -37,11 +36,11 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import javax.ws.rs.core.StreamingOutput;
 
-@Singleton
 @Path("/api/v1/mcp")
 @Consumes(MediaType.APPLICATION_JSON)
-@Produces(MediaType.APPLICATION_JSON)
+@Produces({MediaType.APPLICATION_JSON, McpSseWriter.MEDIA_TYPE})
 public class McpResource implements Resource {
 
     private static final String JSON_RPC_VERSION = "2.0";
@@ -87,12 +86,22 @@ public class McpResource implements Resource {
             }
 
             var params = asObject(message.get("params"));
+            if ("tools/call".equals(method) && acceptsEventStream(request) && toolRegistry.isStreamableTool(params)) {
+                return Response.ok(
+                                (StreamingOutput) out -> toolRegistry.streamTool(params, id, request, out),
+                                McpSseWriter.MEDIA_TYPE)
+                        .header("Cache-Control", "no-cache")
+                        .header("X-Accel-Buffering", "no")
+                        .build();
+            }
+
             var result =
                     switch (method) {
                         case "initialize" -> initialize(params);
-                        case "ping" -> Map.of();
+                        case "ping" -> new EmptyResult();
+                        case "logging/setLevel" -> new EmptyResult();
                         case "tools/list" -> toolRegistry.listTools();
-                        case "tools/call" -> toolRegistry.callTool(params);
+                        case "tools/call" -> toolRegistry.callTool(params, request);
                         default -> null;
                     };
 
@@ -126,27 +135,24 @@ public class McpResource implements Resource {
         }
     }
 
-    private static Map<String, Object> initialize(Map<String, Object> params) {
+    private static InitializeResult initialize(Map<String, Object> params) {
         var requestedProtocolVersion = asString(params.get("protocolVersion"));
         var protocolVersion = SUPPORTED_PROTOCOL_VERSIONS.contains(requestedProtocolVersion)
                 ? requestedProtocolVersion
                 : DEFAULT_PROTOCOL_VERSION;
 
-        return orderedMap(
-                "protocolVersion",
+        return new InitializeResult(
                 protocolVersion,
-                "capabilities",
-                Map.of("tools", Map.of("listChanged", false)),
-                "serverInfo",
-                orderedMap("name", SERVER_NAME, "version", SERVER_VERSION));
+                new Capabilities(new ToolsCapability(false), new LoggingCapability()),
+                new ServerInfo(SERVER_NAME, SERVER_VERSION));
     }
 
-    private static Map<String, Object> response(Object id, Object result) {
-        return orderedMap("jsonrpc", JSON_RPC_VERSION, "id", id, "result", result);
+    private static JsonRpcResponse response(Object id, Object result) {
+        return new JsonRpcResponse(JSON_RPC_VERSION, id, result);
     }
 
-    private static Map<String, Object> error(Object id, int code, String message) {
-        return orderedMap("jsonrpc", JSON_RPC_VERSION, "id", id, "error", orderedMap("code", code, "message", message));
+    private static JsonRpcErrorResponse error(Object id, int code, String message) {
+        return new JsonRpcErrorResponse(JSON_RPC_VERSION, id, new JsonRpcError(code, message));
     }
 
     private static boolean isOriginAllowed(HttpServletRequest request) {
@@ -177,6 +183,11 @@ public class McpResource implements Resource {
         }
     }
 
+    private static boolean acceptsEventStream(HttpServletRequest request) {
+        var accept = request.getHeader("Accept");
+        return accept != null && accept.toLowerCase(java.util.Locale.ROOT).contains(McpSseWriter.MEDIA_TYPE);
+    }
+
     private static String normalizeHostPort(String host, int defaultPort) {
         if (host.indexOf(':') >= 0) {
             return host;
@@ -205,6 +216,24 @@ public class McpResource implements Resource {
                 ? implementationVersion
                 : "0.0.1-SNAPSHOT";
     }
+
+    private record EmptyResult() {}
+
+    private record InitializeResult(String protocolVersion, Capabilities capabilities, ServerInfo serverInfo) {}
+
+    private record Capabilities(ToolsCapability tools, LoggingCapability logging) {}
+
+    private record ToolsCapability(boolean listChanged) {}
+
+    private record LoggingCapability() {}
+
+    private record ServerInfo(String name, String version) {}
+
+    private record JsonRpcResponse(String jsonrpc, Object id, Object result) {}
+
+    private record JsonRpcErrorResponse(String jsonrpc, Object id, JsonRpcError error) {}
+
+    private record JsonRpcError(int code, String message) {}
 
     static Map<String, Object> orderedMap(Object... values) {
         if (values.length % 2 != 0) {

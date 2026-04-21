@@ -21,18 +21,32 @@ package ca.ibodrov.concord.mcp;
  */
 
 import java.util.Map;
+import javax.servlet.http.HttpServletRequest;
 
-record McpTool(String name, String description, Map<String, Object> inputSchema, Handler handler) {
+record McpTool(
+        String name,
+        String description,
+        Map<String, Object> inputSchema,
+        Handler handler,
+        StreamingHandler streamingHandler) {
 
-    Map<String, Object> definition() {
-        return McpResource.orderedMap(
-                "name", name,
-                "description", description,
-                "inputSchema", inputSchema);
+    ToolDefinition definition() {
+        return new ToolDefinition(name, description, inputSchema);
+    }
+
+    boolean streamable() {
+        return streamingHandler != null;
     }
 
     @FunctionalInterface
     interface Handler {
-        Map<String, Object> call(Map<String, Object> arguments);
+        Object call(Map<String, Object> arguments, HttpServletRequest request);
     }
+
+    @FunctionalInterface
+    interface StreamingHandler {
+        Object call(Map<String, Object> arguments, HttpServletRequest request, McpSseWriter writer);
+    }
+
+    record ToolDefinition(String name, String description, Map<String, Object> inputSchema) {}
 }

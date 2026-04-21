@@ -21,6 +21,7 @@ package ca.ibodrov.concord.mcp;
  */
 
 import com.typesafe.config.Config;
+import com.walmartlabs.concord.it.testingserver.TestingConcordAgent;
 import com.walmartlabs.concord.it.testingserver.TestingConcordServer;
 import java.security.SecureRandom;
 import java.util.Base64;
@@ -33,14 +34,21 @@ public class LocalServer {
 
     private static final String ADMIN_TOKEN = randomToken();
     private static final int SERVER_PORT = Integer.getInteger("concord.mcp.serverPort", 8080);
+    private static final boolean START_AGENT =
+            Boolean.parseBoolean(System.getProperty("concord.mcp.startAgent", "true"));
 
     public static void main(String[] args) throws Exception {
         var db = new PostgreSQLContainer<>("postgres:15-alpine");
         db.start();
 
+        TestingConcordAgent agent = null;
         try (db;
                 var server = new TestingConcordServer(db, SERVER_PORT, createConfig(), createExtraModules())) {
             server.start();
+            if (START_AGENT) {
+                agent = new TestingConcordAgent(server, TestingAgentSupport.agentConfig(), List.of());
+                agent.start();
+            }
 
             System.out.printf(
                     """
@@ -53,8 +61,9 @@ public class LocalServer {
                         password: %s
                       API:
                         admin key: %s
+                      Agent:
+                        started: %s
 
-                      curl -i -H 'Authorization: %s' http://localhost:%d/api/v1/mcp/hello
                       curl -i -H 'Authorization: %s' \\
                         -H 'Content-Type: application/json' \\
                         -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \\
@@ -67,12 +76,15 @@ public class LocalServer {
                     db.getUsername(),
                     db.getPassword(),
                     ADMIN_TOKEN,
-                    ADMIN_TOKEN,
-                    SERVER_PORT,
+                    START_AGENT,
                     ADMIN_TOKEN,
                     SERVER_PORT);
 
             Thread.sleep(Long.MAX_VALUE);
+        } finally {
+            if (agent != null) {
+                agent.close();
+            }
         }
     }
 

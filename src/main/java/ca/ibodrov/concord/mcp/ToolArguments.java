@@ -77,6 +77,36 @@ final class ToolArguments {
         throw new IllegalArgumentException("'" + name + "' must be a boolean");
     }
 
+    Integer optionalInteger(String name, Integer defaultValue) {
+        var value = values.get(name);
+        if (value == null) {
+            return defaultValue;
+        }
+        if (value instanceof Number n) {
+            return n.intValue();
+        }
+        throw new IllegalArgumentException("'" + name + "' must be an integer");
+    }
+
+    long requireLong(String name) {
+        var value = values.get(name);
+        if (value instanceof Number n) {
+            return n.longValue();
+        }
+        throw new IllegalArgumentException("'" + name + "' is required and must be an integer");
+    }
+
+    Long optionalLong(String name) {
+        var value = values.get(name);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number n) {
+            return n.longValue();
+        }
+        throw new IllegalArgumentException("'" + name + "' must be an integer");
+    }
+
     <T extends Enum<T>> T optionalEnum(String name, Class<T> type, T defaultValue) {
         var value = optionalString(name);
         if (value == null || value.isBlank()) {
@@ -89,7 +119,6 @@ final class ToolArguments {
         }
     }
 
-    @SuppressWarnings("unchecked")
     Map<String, Object> optionalObject(String name) {
         var value = values.get(name);
         if (value == null) {

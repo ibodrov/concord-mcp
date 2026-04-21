@@ -20,6 +20,7 @@ package ca.ibodrov.concord.mcp;
  * ======
  */
 
+import static com.google.inject.Scopes.SINGLETON;
 import static com.walmartlabs.concord.server.Utils.bindJaxRsResource;
 
 import com.google.inject.Binder;
@@ -31,7 +32,10 @@ public class PluginModule implements Module {
 
     @Override
     public void configure(Binder binder) {
-        bindJaxRsResource(binder, HelloResource.class);
         bindJaxRsResource(binder, McpResource.class);
+        binder.bind(McpToolRegistry.class).in(SINGLETON);
+        binder.bind(ConcordCrudTools.class).in(SINGLETON);
+        binder.bind(ConcordProcessTools.class).in(SINGLETON);
+        binder.bind(ConcordLogTools.class).in(SINGLETON);
     }
 }
