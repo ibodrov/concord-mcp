@@ -30,6 +30,8 @@ import com.walmartlabs.concord.server.jooq.enums.RawPayloadMode;
 import com.walmartlabs.concord.server.org.OrganizationEntry;
 import com.walmartlabs.concord.server.org.OrganizationManager;
 import com.walmartlabs.concord.server.org.OrganizationVisibility;
+import com.walmartlabs.concord.server.org.ResourceAccessLevel;
+import com.walmartlabs.concord.server.org.project.ProjectAccessManager;
 import com.walmartlabs.concord.server.org.project.ProjectDao;
 import com.walmartlabs.concord.server.org.project.ProjectEntry;
 import com.walmartlabs.concord.server.org.project.ProjectManager;
@@ -58,6 +60,7 @@ class ConcordCrudTools {
 
     private final OrganizationManager orgManager;
     private final ProjectManager projectManager;
+    private final ProjectAccessManager projectAccessManager;
     private final ProjectDao projectDao;
     private final ProjectRepositoryManager repositoryManager;
     private final RepositoryDao repositoryDao;
@@ -67,6 +70,7 @@ class ConcordCrudTools {
     ConcordCrudTools(
             OrganizationManager orgManager,
             ProjectManager projectManager,
+            ProjectAccessManager projectAccessManager,
             ProjectDao projectDao,
             ProjectRepositoryManager repositoryManager,
             RepositoryDao repositoryDao,
@@ -74,6 +78,7 @@ class ConcordCrudTools {
 
         this.orgManager = orgManager;
         this.projectManager = projectManager;
+        this.projectAccessManager = projectAccessManager;
         this.projectDao = projectDao;
         this.repositoryManager = repositoryManager;
         this.repositoryDao = repositoryDao;
@@ -297,16 +302,32 @@ class ConcordCrudTools {
     private Set<UUID> projectIds(UUID orgId, ToolArguments args) {
         var result = new LinkedHashSet<UUID>();
         for (var projectId : args.optionalStringList("projectIds")) {
-            result.add(UUID.fromString(projectId));
+            var project = projectAccessManager.assertAccess(
+                    orgId, parseUuid("projectIds", projectId), null, ResourceAccessLevel.WRITER, true);
+            assertSameOrg(orgId, project);
+            result.add(project.getId());
         }
         for (var projectName : args.optionalStringList("projectNames")) {
-            var projectId = projectDao.getId(orgId, projectName);
-            if (projectId == null) {
-                throw new ConcordApplicationException("Project not found: " + projectName, Response.Status.NOT_FOUND);
-            }
-            result.add(projectId);
+            var project = projectAccessManager.assertAccess(orgId, null, projectName, ResourceAccessLevel.WRITER, true);
+            assertSameOrg(orgId, project);
+            result.add(project.getId());
         }
         return result.isEmpty() ? null : result;
+    }
+
+    private static UUID parseUuid(String name, String value) {
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("'" + name + "' must contain UUIDs");
+        }
+    }
+
+    private static void assertSameOrg(UUID orgId, ProjectEntry project) {
+        if (!orgId.equals(project.getOrgId())) {
+            throw new ConcordApplicationException(
+                    "Project does not belong to organization: " + project.getName(), Response.Status.BAD_REQUEST);
+        }
     }
 
     private String storeType(ToolArguments args) {

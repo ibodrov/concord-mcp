@@ -42,6 +42,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Semaphore;
 import javax.inject.Inject;
 import javax.servlet.http.HttpServletRequest;
 import org.jooq.Configuration;
@@ -51,8 +52,14 @@ class ConcordLogTools {
 
     private static final int DEFAULT_READ_BYTES = 8 * 1024;
     private static final int DEFAULT_STREAM_BYTES = 16 * 1024;
+    private static final int DEFAULT_STREAM_DURATION_MS =
+            positiveIntegerProperty("concord.mcp.defaultStreamDurationMillis", 30_000);
     private static final int MAX_READ_BYTES = 256 * 1024;
-    private static final int MAX_STREAM_DURATION_MS = 5 * 60 * 1000;
+    private static final int MAX_STREAM_DURATION_MS =
+            positiveIntegerProperty("concord.mcp.maxStreamDurationMillis", 60_000);
+    private static final int MAX_CONCURRENT_LOG_STREAMS =
+            positiveIntegerProperty("concord.mcp.maxConcurrentLogStreams", 8);
+    private static final Semaphore LOG_STREAM_PERMITS = new Semaphore(MAX_CONCURRENT_LOG_STREAMS);
     private static final EnumSet<ProcessStatus> TERMINAL_STATUSES =
             EnumSet.of(ProcessStatus.FINISHED, ProcessStatus.FAILED, ProcessStatus.CANCELLED, ProcessStatus.TIMED_OUT);
 
@@ -140,14 +147,58 @@ class ConcordLogTools {
         var format = LogFormat.from(args.optionalString("format"));
         var includeSystem = args.optionalBoolean("includeSystem", true);
         var segmentId = args.optionalLong("segmentId");
-        var follow = args.optionalBoolean("follow", writer != null);
+        var follow = args.optionalBoolean("follow", false);
         var pollMillis = Math.min(Math.max(100, args.optionalInteger("pollMillis", 1000)), 10_000);
-        var maxDurationMillis =
-                Math.min(Math.max(1000, args.optionalInteger("maxDurationMillis", 60_000)), MAX_STREAM_DURATION_MS);
+        var maxDurationMillis = Math.min(
+                Math.max(1000, args.optionalInteger("maxDurationMillis", DEFAULT_STREAM_DURATION_MS)),
+                MAX_STREAM_DURATION_MS);
         var maxBytesPerPoll =
                 Math.min(Math.max(1, args.optionalInteger("maxBytesPerPoll", DEFAULT_STREAM_BYTES)), MAX_READ_BYTES);
         var maxBufferedBytes =
                 Math.min(Math.max(0, args.optionalInteger("maxBufferedBytes", 64 * 1024)), MAX_READ_BYTES);
+
+        var acquiredPermit = false;
+        if (follow || writer != null) {
+            acquiredPermit = LOG_STREAM_PERMITS.tryAcquire();
+            if (!acquiredPermit) {
+                throw new IllegalArgumentException("Too many concurrent log streams");
+            }
+        }
+
+        try {
+            return streamLog(
+                    instanceId,
+                    processKey,
+                    format,
+                    includeSystem,
+                    segmentId,
+                    follow,
+                    pollMillis,
+                    maxDurationMillis,
+                    maxBytesPerPoll,
+                    maxBufferedBytes,
+                    args,
+                    writer);
+        } finally {
+            if (acquiredPermit) {
+                LOG_STREAM_PERMITS.release();
+            }
+        }
+    }
+
+    private ProcessLogStreamResult streamLog(
+            UUID instanceId,
+            ProcessKey processKey,
+            LogFormat format,
+            boolean includeSystem,
+            Long segmentId,
+            boolean follow,
+            int pollMillis,
+            int maxDurationMillis,
+            int maxBytesPerPoll,
+            int maxBufferedBytes,
+            ToolArguments args,
+            McpSseWriter writer) {
 
         var offset = args.optionalInteger("startOffset", null);
         if (offset == null) {
@@ -410,6 +461,11 @@ class ConcordLogTools {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while streaming process log", e);
         }
+    }
+
+    private static int positiveIntegerProperty(String name, int defaultValue) {
+        var value = Integer.getInteger(name, defaultValue);
+        return value > 0 ? value : defaultValue;
     }
 
     private static ReadWindow readWindow(ToolArguments args, int defaultBytes) {

@@ -53,6 +53,7 @@ public class McpResource implements Resource {
     private static final String FORWARDED_PORT_HEADER = "X-Forwarded-Port";
     private static final String FORWARDED_PROTO_HEADER = "X-Forwarded-Proto";
     private static final String X_ACCEL_BUFFERING_HEADER = "X-Accel-Buffering";
+    private static final String TRUSTED_FORWARDED_PROXIES_PROPERTY = "concord.mcp.trustedForwardedProxies";
     private static final String DEFAULT_PROTOCOL_VERSION = "2025-06-18";
     private static final String SERVER_NAME = "concord-mcp-server";
     private static final String SERVER_VERSION = serverVersion();
@@ -174,9 +175,14 @@ public class McpResource implements Resource {
                 return true;
             }
 
-            var forwardedHost = firstHeaderValue(request.getHeader(FORWARDED_HOST_HEADER));
-            var forwardedProto = firstHeaderValue(request.getHeader(FORWARDED_PROTO_HEADER));
-            var forwardedPort = parsePort(firstHeaderValue(request.getHeader(FORWARDED_PORT_HEADER)));
+            var trustForwardedHeaders = isTrustedForwardedProxy(request);
+            var forwardedHost =
+                    trustForwardedHeaders ? firstHeaderValue(request.getHeader(FORWARDED_HOST_HEADER)) : null;
+            var forwardedProto =
+                    trustForwardedHeaders ? firstHeaderValue(request.getHeader(FORWARDED_PROTO_HEADER)) : null;
+            var forwardedPort = trustForwardedHeaders
+                    ? parsePort(firstHeaderValue(request.getHeader(FORWARDED_PORT_HEADER)))
+                    : null;
             var requestOrigin = requestOrigin(
                     forwardedProto != null ? forwardedProto : request.getScheme(),
                     forwardedHost != null ? forwardedHost : host,
@@ -186,6 +192,20 @@ public class McpResource implements Resource {
         } catch (IllegalArgumentException e) {
             return false;
         }
+    }
+
+    private static boolean isTrustedForwardedProxy(HttpServletRequest request) {
+        var remoteAddr = request.getRemoteAddr();
+        if (remoteAddr == null || remoteAddr.isBlank()) {
+            return false;
+        }
+
+        var value = System.getProperty(TRUSTED_FORWARDED_PROXIES_PROPERTY, "");
+        if (value.isBlank()) {
+            return false;
+        }
+
+        return Arrays.stream(value.split(",")).map(String::trim).anyMatch(remoteAddr::equals);
     }
 
     private static boolean acceptsEventStream(HttpServletRequest request) {

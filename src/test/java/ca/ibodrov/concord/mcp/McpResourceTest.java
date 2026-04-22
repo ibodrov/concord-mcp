@@ -31,7 +31,30 @@ import org.junit.jupiter.api.Test;
 class McpResourceTest {
 
     @Test
-    void allowsOriginUsingForwardedHttpsDefaults() {
+    void allowsOriginUsingForwardedHttpsFromTrustedProxy() {
+        withTrustedProxy("127.0.0.1", () -> {
+            var resource = new McpResource(null);
+            var request = request(
+                    Map.of(
+                            "Origin",
+                            "https://concord.example.com",
+                            HttpHeaders.HOST,
+                            "concord.example.com",
+                            "X-Forwarded-Proto",
+                            "https"),
+                    "http",
+                    8080,
+                    "127.0.0.1");
+
+            var response = resource.post(
+                    Map.of("jsonrpc", "2.0", "id", "init", "method", "initialize", "params", Map.of()), request);
+
+            assertEquals(200, response.getStatus());
+        });
+    }
+
+    @Test
+    void rejectsSpoofedForwardedOriginFromUntrustedProxy() {
         var resource = new McpResource(null);
         var request = request(
                 Map.of(
@@ -42,12 +65,13 @@ class McpResourceTest {
                         "X-Forwarded-Proto",
                         "https"),
                 "http",
-                8080);
+                8080,
+                "198.51.100.10");
 
         var response = resource.post(
                 Map.of("jsonrpc", "2.0", "id", "init", "method", "initialize", "params", Map.of()), request);
 
-        assertEquals(200, response.getStatus());
+        assertEquals(403, response.getStatus());
     }
 
     @Test
@@ -62,7 +86,8 @@ class McpResourceTest {
                         "X-Forwarded-Proto",
                         "https"),
                 "http",
-                8080);
+                8080,
+                "127.0.0.1");
 
         var response = resource.post(
                 Map.of("jsonrpc", "2.0", "id", "init", "method", "initialize", "params", Map.of()), request);
@@ -70,7 +95,8 @@ class McpResourceTest {
         assertEquals(403, response.getStatus());
     }
 
-    private static HttpServletRequest request(Map<String, String> headers, String scheme, int serverPort) {
+    private static HttpServletRequest request(
+            Map<String, String> headers, String scheme, int serverPort, String remoteAddr) {
         return (HttpServletRequest) Proxy.newProxyInstance(
                 McpResourceTest.class.getClassLoader(),
                 new Class<?>[] {HttpServletRequest.class},
@@ -78,7 +104,23 @@ class McpResourceTest {
                     case "getHeader" -> headers.get((String) args[0]);
                     case "getScheme" -> scheme;
                     case "getServerPort" -> serverPort;
+                    case "getRemoteAddr" -> remoteAddr;
                     default -> null;
                 });
+    }
+
+    private static void withTrustedProxy(String value, Runnable runnable) {
+        var name = "concord.mcp.trustedForwardedProxies";
+        var previous = System.getProperty(name);
+        System.setProperty(name, value);
+        try {
+            runnable.run();
+        } finally {
+            if (previous == null) {
+                System.clearProperty(name);
+            } else {
+                System.setProperty(name, previous);
+            }
+        }
     }
 }
