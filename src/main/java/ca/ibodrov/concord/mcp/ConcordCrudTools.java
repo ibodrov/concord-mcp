@@ -20,6 +20,8 @@ package ca.ibodrov.concord.mcp;
  * ======
  */
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.walmartlabs.concord.server.OperationResult;
 import com.walmartlabs.concord.server.jooq.enums.OutVariablesMode;
@@ -41,7 +43,6 @@ import com.walmartlabs.concord.server.org.secret.SecretVisibility;
 import com.walmartlabs.concord.server.sdk.ConcordApplicationException;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -52,6 +53,8 @@ import javax.inject.Inject;
 import javax.ws.rs.core.Response;
 
 class ConcordCrudTools {
+
+    private static final int MAX_SECRET_BYTES = positiveIntegerProperty("concord.mcp.maxSecretBytes", 1024 * 1024);
 
     private final OrganizationManager orgManager;
     private final ProjectManager projectManager;
@@ -80,7 +83,7 @@ class ConcordCrudTools {
     OrganizationResult createOrg(Map<String, Object> arguments) {
         var args = new ToolArguments(arguments);
         var name = args.requireString("name");
-        var visibility = args.optionalEnum("visibility", OrganizationVisibility.class, OrganizationVisibility.PUBLIC);
+        var visibility = args.optionalEnum("visibility", OrganizationVisibility.class, OrganizationVisibility.PRIVATE);
 
         var entry = new OrganizationEntry(
                 null, name, null, visibility, args.optionalObject("meta"), args.optionalObject("cfg"));
@@ -94,7 +97,7 @@ class ConcordCrudTools {
         var args = new ToolArguments(arguments);
         var orgName = args.requireString("orgName");
         var name = args.requireString("name");
-        var visibility = args.optionalEnum("visibility", ProjectVisibility.class, ProjectVisibility.PUBLIC);
+        var visibility = args.optionalEnum("visibility", ProjectVisibility.class, ProjectVisibility.PRIVATE);
 
         var entry = new ProjectEntry(
                 null,
@@ -177,13 +180,17 @@ class ConcordCrudTools {
 
     SecretResult createDataSecret(Map<String, Object> arguments) {
         var args = new ToolArguments(arguments);
-        var data = args.optionalString("data");
-        var dataBase64 = args.optionalString("dataBase64");
-        if ((data == null || data.isBlank()) && (dataBase64 == null || dataBase64.isBlank())) {
-            throw new IllegalArgumentException("'data' or 'dataBase64' is required");
+        var data = blankToNull(args.optionalString("data"));
+        var dataBase64 = blankToNull(args.optionalString("dataBase64"));
+        if ((data == null) == (dataBase64 == null)) {
+            throw new IllegalArgumentException("Exactly one non-blank value of 'data' or 'dataBase64' is required");
         }
 
-        var bytes = dataBase64 != null ? Base64.getDecoder().decode(dataBase64) : data.getBytes(StandardCharsets.UTF_8);
+        var bytes = dataBase64 != null ? decodeBase64("dataBase64", dataBase64) : data.getBytes(UTF_8);
+        if (bytes.length > MAX_SECRET_BYTES) {
+            throw new IllegalArgumentException("Secret data exceeds the " + MAX_SECRET_BYTES + " byte limit");
+        }
+
         var org = orgManager.assertAccess(args.requireString("orgName"), true);
         var projectIds = projectIds(org.getId(), args);
         var storeType = storeType(args);
@@ -209,6 +216,7 @@ class ConcordCrudTools {
         var storeType = storeType(args);
         var visibility = visibility(args);
         var password = args.requireString("password");
+        assertUtf8Size("password", password);
 
         var created = secretManager.createUsernamePassword(
                 org.getId(),
@@ -248,7 +256,7 @@ class ConcordCrudTools {
                 visibility,
                 storeType,
                 projectIds,
-                new String(created.getData(), StandardCharsets.UTF_8));
+                new String(created.getData(), UTF_8));
     }
 
     private DecryptedKeyPair createKeyPairSecret(
@@ -267,13 +275,18 @@ class ConcordCrudTools {
         }
 
         try {
+            publicKey = args.requireString("publicKey");
+            privateKey = args.requireString("privateKey");
+            assertUtf8Size("publicKey", publicKey);
+            assertUtf8Size("privateKey", privateKey);
+
             return secretManager.createKeyPair(
                     orgId,
                     projectIds,
                     args.requireString("name"),
                     args.optionalString("storePassword"),
-                    new ByteArrayInputStream(args.requireString("publicKey").getBytes(StandardCharsets.UTF_8)),
-                    new ByteArrayInputStream(args.requireString("privateKey").getBytes(StandardCharsets.UTF_8)),
+                    new ByteArrayInputStream(publicKey.getBytes(UTF_8)),
+                    new ByteArrayInputStream(privateKey.getBytes(UTF_8)),
                     visibility,
                     storeType);
         } catch (IOException e) {
@@ -311,7 +324,38 @@ class ConcordCrudTools {
     }
 
     private static SecretVisibility visibility(ToolArguments args) {
-        return args.optionalEnum("visibility", SecretVisibility.class, SecretVisibility.PUBLIC);
+        return args.optionalEnum("visibility", SecretVisibility.class, SecretVisibility.PRIVATE);
+    }
+
+    private static byte[] decodeBase64(String name, String base64) {
+        if (maxDecodedBytes(base64) > MAX_SECRET_BYTES) {
+            throw new IllegalArgumentException("'" + name + "' exceeds the " + MAX_SECRET_BYTES + " byte limit");
+        }
+
+        try {
+            return Base64.getDecoder().decode(base64);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("'" + name + "' must be valid base64");
+        }
+    }
+
+    private static long maxDecodedBytes(String base64) {
+        return ((long) base64.length() + 3) / 4 * 3;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    private static void assertUtf8Size(String name, String value) {
+        if (value.getBytes(UTF_8).length > MAX_SECRET_BYTES) {
+            throw new IllegalArgumentException("'" + name + "' exceeds the " + MAX_SECRET_BYTES + " byte limit");
+        }
+    }
+
+    private static int positiveIntegerProperty(String name, int defaultValue) {
+        var value = Integer.getInteger(name, defaultValue);
+        return value > 0 ? value : defaultValue;
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)

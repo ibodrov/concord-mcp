@@ -20,6 +20,8 @@ package ca.ibodrov.concord.mcp;
  * ======
  */
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -38,14 +40,18 @@ import com.walmartlabs.concord.server.process.ProcessManager;
 import com.walmartlabs.concord.server.process.queue.ProcessQueueManager;
 import com.walmartlabs.concord.server.sdk.ConcordApplicationException;
 import com.walmartlabs.concord.server.sdk.PartialProcessKey;
+import com.walmartlabs.concord.server.sdk.ProcessKey;
+import com.walmartlabs.concord.server.security.Roles;
+import com.walmartlabs.concord.server.security.UnauthorizedException;
 import com.walmartlabs.concord.server.security.UserPrincipal;
+import com.walmartlabs.concord.server.security.sessionkey.SessionKeyPrincipal;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -61,6 +67,11 @@ class ConcordProcessTools {
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapperProvider().get();
+    private static final int MAX_PARTS = positiveIntegerProperty("concord.mcp.maxProcessParts", 64);
+    private static final int MAX_PART_BYTES =
+            positiveIntegerProperty("concord.mcp.maxProcessPartBytes", 16 * 1024 * 1024);
+    private static final int MAX_TOTAL_PART_BYTES =
+            positiveIntegerProperty("concord.mcp.maxProcessTotalBytes", 64 * 1024 * 1024);
 
     private final OrganizationDao orgDao;
     private final ProjectDao projectDao;
@@ -144,17 +155,46 @@ class ConcordProcessTools {
     }
 
     ProcessEntry assertProcess(UUID instanceId) {
+        var process = getProcessEntry(instanceId);
+        assertProcessAccess(process);
+        return process;
+    }
+
+    ProcessEntry getProcessEntry(UUID instanceId) {
         var process = processQueueManager.get(PartialProcessKey.from(instanceId), Collections.emptySet());
         if (process == null) {
             throw new ConcordApplicationException(
                     "Process instance not found: " + instanceId, Response.Status.NOT_FOUND);
         }
+        return process;
+    }
+
+    private void assertProcessAccess(ProcessEntry process) {
+        if (Roles.isAdmin() || Roles.isGlobalReader()) {
+            return;
+        }
+
+        var current = UserPrincipal.assertCurrent();
+        if (current.getId().equals(process.initiatorId())) {
+            return;
+        }
+
+        var sessionKey = SessionKeyPrincipal.getCurrent();
+        if (sessionKey != null) {
+            var processKey = new ProcessKey(process.instanceId(), process.createdAt());
+            if (processKey.partOf(sessionKey.getProcessKey())) {
+                return;
+            }
+        }
 
         if (process.projectId() != null) {
             projectAccessManager.assertAccess(
                     process.orgId(), process.projectId(), null, ResourceAccessLevel.READER, false);
+            return;
         }
-        return process;
+
+        throw new UnauthorizedException(
+                "User '" + current.getUsername() + "' is not authorized to access process " + process.instanceId());
     }
 
     private static Map<String, Object> configuration(List<Part> parts) {
@@ -287,14 +327,30 @@ class ConcordProcessTools {
             throw new IllegalArgumentException("'parts' must be an array");
         }
 
-        return list.stream()
-                .map(item -> {
-                    if (!(item instanceof Map<?, ?> raw)) {
-                        throw new IllegalArgumentException("'parts' entries must be objects");
-                    }
-                    return parsePart((Map<String, Object>) raw);
-                })
-                .toList();
+        if (list.size() > MAX_PARTS) {
+            throw new IllegalArgumentException("'parts' must contain at most " + MAX_PARTS + " entries");
+        }
+
+        var result = new ArrayList<Part>(list.size());
+        var totalBytes = 0L;
+        for (var item : list) {
+            if (!(item instanceof Map<?, ?> raw)) {
+                throw new IllegalArgumentException("'parts' entries must be objects");
+            }
+
+            var part = parsePart((Map<String, Object>) raw);
+            if (part.data().length > MAX_PART_BYTES) {
+                throw new IllegalArgumentException(
+                        "Part '" + part.name() + "' exceeds the " + MAX_PART_BYTES + " byte limit");
+            }
+
+            totalBytes += part.data().length;
+            if (totalBytes > MAX_TOTAL_PART_BYTES) {
+                throw new IllegalArgumentException("'parts' exceed the " + MAX_TOTAL_PART_BYTES + " byte total limit");
+            }
+            result.add(part);
+        }
+        return List.copyOf(result);
     }
 
     private static Part parsePart(Map<String, Object> raw) {
@@ -312,10 +368,24 @@ class ConcordProcessTools {
             throw new IllegalArgumentException("Part '" + name + "' must contain exactly one of 'text' or 'base64'");
         }
 
-        var data = text != null
-                ? text.getBytes(StandardCharsets.UTF_8)
-                : Base64.getDecoder().decode(base64);
+        var data = text != null ? text.getBytes(UTF_8) : decodeBase64(name, base64, MAX_PART_BYTES);
         return new Part(name, MediaType.valueOf(contentType), data);
+    }
+
+    private static byte[] decodeBase64(String name, String base64, int maxBytes) {
+        if (maxDecodedBytes(base64) > maxBytes) {
+            throw new IllegalArgumentException("Part '" + name + "' exceeds the " + maxBytes + " byte limit");
+        }
+
+        try {
+            return Base64.getDecoder().decode(base64);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Part '" + name + "' must contain valid base64");
+        }
+    }
+
+    private static long maxDecodedBytes(String base64) {
+        return ((long) base64.length() + 3) / 4 * 3;
     }
 
     private static void validateAttachmentName(String name) {
@@ -345,6 +415,11 @@ class ConcordProcessTools {
             return s;
         }
         throw new IllegalArgumentException("Part '" + name + "' must be a string");
+    }
+
+    private static int positiveIntegerProperty(String name, int defaultValue) {
+        var value = Integer.getInteger(name, defaultValue);
+        return value > 0 ? value : defaultValue;
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -446,7 +521,7 @@ class ConcordProcessTools {
         }
 
         String stringValue() {
-            return new String(data, StandardCharsets.UTF_8).trim();
+            return new String(data, UTF_8).trim();
         }
     }
 }

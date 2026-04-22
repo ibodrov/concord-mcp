@@ -22,9 +22,12 @@ package ca.ibodrov.concord.mcp;
 
 import com.walmartlabs.concord.server.sdk.rest.Resource;
 import java.net.URI;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import javax.inject.Inject;
 import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.Consumes;
@@ -46,12 +49,16 @@ public class McpResource implements Resource {
 
     private static final String JSON_RPC_VERSION = "2.0";
     private static final String ORIGIN_HEADER = "Origin";
+    private static final String FORWARDED_HOST_HEADER = "X-Forwarded-Host";
+    private static final String FORWARDED_PORT_HEADER = "X-Forwarded-Port";
+    private static final String FORWARDED_PROTO_HEADER = "X-Forwarded-Proto";
     private static final String X_ACCEL_BUFFERING_HEADER = "X-Accel-Buffering";
     private static final String DEFAULT_PROTOCOL_VERSION = "2025-06-18";
     private static final String SERVER_NAME = "concord-mcp-server";
     private static final String SERVER_VERSION = serverVersion();
     private static final List<String> SUPPORTED_PROTOCOL_VERSIONS =
             List.of("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05");
+    private static final Set<String> ALLOWED_ORIGINS = allowedOrigins();
 
     private final McpToolRegistry toolRegistry;
 
@@ -157,15 +164,25 @@ public class McpResource implements Resource {
         try {
             var originUri = URI.create(origin);
             var originHost = originUri.getHost();
-            if (originHost == null) {
+            var originScheme = originUri.getScheme();
+            if (originHost == null || originScheme == null) {
                 return false;
             }
 
-            var originPort = originUri.getPort();
-            var requestPort = request.getServerPort();
-            var normalizedOrigin = normalizeHostPort(originHost, originPort);
-            var normalizedHost = normalizeHostPort(host, requestPort);
-            return normalizedOrigin.equalsIgnoreCase(normalizedHost);
+            var normalizedOrigin = normalizeOrigin(originScheme, originHost, originUri.getPort());
+            if (ALLOWED_ORIGINS.contains(normalizedOrigin)) {
+                return true;
+            }
+
+            var forwardedHost = firstHeaderValue(request.getHeader(FORWARDED_HOST_HEADER));
+            var forwardedProto = firstHeaderValue(request.getHeader(FORWARDED_PROTO_HEADER));
+            var forwardedPort = parsePort(firstHeaderValue(request.getHeader(FORWARDED_PORT_HEADER)));
+            var requestOrigin = requestOrigin(
+                    forwardedProto != null ? forwardedProto : request.getScheme(),
+                    forwardedHost != null ? forwardedHost : host,
+                    forwardedPort,
+                    request.getServerPort());
+            return normalizedOrigin.equalsIgnoreCase(requestOrigin);
         } catch (IllegalArgumentException e) {
             return false;
         }
@@ -176,11 +193,83 @@ public class McpResource implements Resource {
         return accept != null && accept.toLowerCase(java.util.Locale.ROOT).contains(McpSseWriter.MEDIA_TYPE);
     }
 
-    private static String normalizeHostPort(String host, int defaultPort) {
-        if (host.indexOf(':') >= 0) {
-            return host;
+    private static String requestOrigin(String scheme, String hostHeader, Integer forwardedPort, int serverPort) {
+        var hostUri = URI.create("//" + hostHeader);
+        var host = hostUri.getHost();
+        if (host == null) {
+            throw new IllegalArgumentException("Invalid Host header");
         }
-        return host + ":" + defaultPort;
+
+        var port = hostUri.getPort();
+        if (port < 0 && forwardedPort != null) {
+            port = forwardedPort;
+        }
+        if (port < 0) {
+            var defaultPort = defaultPort(scheme);
+            port = defaultPort > 0 ? defaultPort : serverPort;
+        }
+
+        return normalizeOrigin(scheme, host, port);
+    }
+
+    private static String normalizeOrigin(String scheme, String host, int port) {
+        var normalizedScheme = scheme.toLowerCase(java.util.Locale.ROOT);
+        var normalizedHost = host.toLowerCase(java.util.Locale.ROOT);
+        var effectivePort = port >= 0 ? port : defaultPort(normalizedScheme);
+        if (effectivePort < 0) {
+            throw new IllegalArgumentException("Unsupported origin scheme: " + scheme);
+        }
+        return normalizedScheme + "://" + normalizedHost + ":" + effectivePort;
+    }
+
+    private static int defaultPort(String scheme) {
+        if ("http".equalsIgnoreCase(scheme)) {
+            return 80;
+        }
+        if ("https".equalsIgnoreCase(scheme)) {
+            return 443;
+        }
+        return -1;
+    }
+
+    private static String firstHeaderValue(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        var first = value.split(",", 2)[0].trim();
+        return first.isBlank() ? null : first;
+    }
+
+    private static Integer parsePort(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        try {
+            var port = Integer.parseInt(value);
+            return port > 0 ? port : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static Set<String> allowedOrigins() {
+        var value = System.getProperty("concord.mcp.allowedOrigins", "");
+        if (value.isBlank()) {
+            return Set.of();
+        }
+
+        return Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(v -> !v.isBlank())
+                .map(v -> {
+                    var uri = URI.create(v);
+                    if (uri.getScheme() == null || uri.getHost() == null) {
+                        throw new IllegalArgumentException("Invalid concord.mcp.allowedOrigins value: " + v);
+                    }
+                    return normalizeOrigin(uri.getScheme(), uri.getHost(), uri.getPort());
+                })
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     @SuppressWarnings("unchecked")

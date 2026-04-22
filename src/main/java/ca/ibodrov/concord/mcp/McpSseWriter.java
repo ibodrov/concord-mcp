@@ -20,10 +20,11 @@ package ca.ibodrov.concord.mcp;
  * ======
  */
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 
 final class McpSseWriter {
 
@@ -48,10 +49,10 @@ final class McpSseWriter {
 
     private void send(Object value) {
         try {
-            out.write("event: message\n".getBytes(StandardCharsets.UTF_8));
-            out.write("data: ".getBytes(StandardCharsets.UTF_8));
+            out.write("event: message\n".getBytes(UTF_8));
+            out.write("data: ".getBytes(UTF_8));
             objectMapper.writeValue(out, value);
-            out.write("\n\n".getBytes(StandardCharsets.UTF_8));
+            out.write("\n\n".getBytes(UTF_8));
             out.flush();
         } catch (IOException e) {
             throw new IllegalStateException("Error while writing SSE response", e);

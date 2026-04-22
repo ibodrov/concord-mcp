@@ -23,6 +23,7 @@ package ca.ibodrov.concord.mcp;
 import static com.walmartlabs.concord.db.PgUtils.upperRange;
 import static com.walmartlabs.concord.server.jooq.Tables.PROCESS_LOG_DATA;
 import static com.walmartlabs.concord.server.jooq.Tables.PROCESS_LOG_SEGMENTS;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.max;
 
@@ -35,7 +36,6 @@ import com.walmartlabs.concord.server.process.logs.ProcessLogsDao.ProcessLog;
 import com.walmartlabs.concord.server.process.logs.ProcessLogsDao.ProcessLogChunk;
 import com.walmartlabs.concord.server.sdk.ProcessKey;
 import com.walmartlabs.concord.server.sdk.ProcessStatus;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.EnumSet;
 import java.util.List;
@@ -173,7 +173,7 @@ class ConcordLogTools {
 
             if (!lastResult.text().isEmpty()) {
                 emittedChunks++;
-                emittedBytes += lastResult.text().getBytes(StandardCharsets.UTF_8).length;
+                emittedBytes += lastResult.text().getBytes(UTF_8).length;
                 offset = lastResult.endOffset();
 
                 if (writer != null) {
@@ -249,7 +249,7 @@ class ConcordLogTools {
                 actualStart = Math.max(chunk.getStart(), requestedStart);
             }
             actualEnd = Math.max(actualEnd, Math.min(chunk.getStart() + chunk.getData().length, requestedEnd));
-            text.append(new String(clipped, StandardCharsets.UTF_8));
+            text.append(new String(clipped, UTF_8));
         }
 
         if (actualStart < 0) {
@@ -277,7 +277,7 @@ class ConcordLogTools {
                 actualStart = Math.max(chunk.start(), requestedStart);
             }
             actualEnd = Math.max(actualEnd, Math.min(chunk.start() + chunk.data().length, requestedEnd));
-            appendPrefixed(text, chunk.segmentName(), new String(clipped, StandardCharsets.UTF_8));
+            appendPrefixed(text, chunk.segmentName(), new String(clipped, UTF_8));
         }
 
         if (actualStart < 0) {
@@ -349,7 +349,7 @@ class ConcordLogTools {
     }
 
     private boolean isTerminal(UUID instanceId) {
-        var process = processTools.assertProcess(instanceId);
+        var process = processTools.getProcessEntry(instanceId);
         return TERMINAL_STATUSES.contains(process.status());
     }
 
@@ -397,8 +397,7 @@ class ConcordLogTools {
             return;
         }
 
-        var bytes = buffer.toString().getBytes(StandardCharsets.UTF_8).length
-                + text.getBytes(StandardCharsets.UTF_8).length;
+        var bytes = buffer.toString().getBytes(UTF_8).length + text.getBytes(UTF_8).length;
         if (bytes <= maxBytes) {
             buffer.append(text);
         }

@@ -20,6 +20,7 @@ package ca.ibodrov.concord.mcp;
  * ======
  */
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -38,7 +39,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.EnumSet;
 import java.util.List;
@@ -100,12 +100,14 @@ public class McpResourceLocalIT {
         var org = callTool("concord_create_org", Map.of("name", "mcp-it-org"));
         assertEquals("organization", org.get("entity"));
         assertEquals("CREATED", org.get("result"));
+        assertEquals("PRIVATE", org.get("visibility"));
 
         var project = callTool(
                 "concord_create_project",
                 Map.of("orgName", "mcp-it-org", "name", "mcp-it-project", "description", "MCP integration test"));
         assertEquals("project", project.get("entity"));
         assertEquals("CREATED", project.get("result"));
+        assertEquals("PRIVATE", project.get("visibility"));
 
         var repository = callTool(
                 "concord_create_repository",
@@ -139,7 +141,23 @@ public class McpResourceLocalIT {
                         List.of("mcp-it-project")));
         assertEquals("secret", secret.get("entity"));
         assertEquals("DATA", secret.get("type"));
+        assertEquals("PRIVATE", secret.get("visibility"));
         assertFalse(secret.toString().contains("secret-value"), secret.toString());
+
+        var invalidSecret = callToolError(
+                "concord_create_data_secret",
+                Map.of(
+                        "orgName",
+                        "mcp-it-org",
+                        "name",
+                        "mcp-it-invalid-secret",
+                        "data",
+                        "secret-value",
+                        "dataBase64",
+                        "b3RoZXI="));
+        assertTrue(
+                invalidSecret.get("error").toString().contains("Exactly one non-blank value"),
+                invalidSecret.toString());
     }
 
     @Test
@@ -258,6 +276,14 @@ public class McpResourceLocalIT {
         return object(result.get("structuredContent"));
     }
 
+    private static Map<String, Object> callToolError(String name, Map<String, Object> arguments) throws Exception {
+        var response = postMcp("tools/call", Map.of("name", name, "arguments", arguments));
+        assertFalse(response.containsKey("error"), response.toString());
+        var result = object(response.get("result"));
+        assertEquals(true, result.get("isError"), response.toString());
+        return object(result.get("structuredContent"));
+    }
+
     private static Map<String, Object> waitForTerminalProcess(String instanceId) throws Exception {
         for (var i = 0; i < 60; i++) {
             var process = callTool("concord_get_process", Map.of("instanceId", instanceId));
@@ -273,10 +299,10 @@ public class McpResourceLocalIT {
 
     private static String zipBase64(Map<String, String> files) throws Exception {
         var out = new ByteArrayOutputStream();
-        try (var zip = new ZipOutputStream(out, StandardCharsets.UTF_8)) {
+        try (var zip = new ZipOutputStream(out, UTF_8)) {
             for (var entry : files.entrySet()) {
                 zip.putNextEntry(new ZipEntry(entry.getKey()));
-                zip.write(entry.getValue().getBytes(StandardCharsets.UTF_8));
+                zip.write(entry.getValue().getBytes(UTF_8));
                 zip.closeEntry();
             }
         }

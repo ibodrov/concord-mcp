@@ -199,11 +199,11 @@
                 <version>2.5.0</version>
                 <executions>
                     <execution>
-                        <id>update-file-header</id>
+                        <id>check-file-header</id>
                         <goals>
-                            <goal>update-file-header</goal>
+                            <goal>check-file-header</goal>
                         </goals>
-                        <phase>process-sources</phase>
+                        <phase>verify</phase>
                     </execution>
                 </executions>
                 <configuration>

@@ -48,7 +48,11 @@ public class McpToolRegistry {
                         objectSchema(
                                 properties(
                                         "name", string("Organization name."),
-                                        "visibility", stringEnum("Organization visibility.", "PUBLIC", "PRIVATE"),
+                                        "visibility",
+                                                stringEnum(
+                                                        "Organization visibility. Defaults to PRIVATE.",
+                                                        "PUBLIC",
+                                                        "PRIVATE"),
                                         "meta", object("Organization metadata."),
                                         "cfg", object("Organization configuration.")),
                                 "name"),
@@ -61,7 +65,11 @@ public class McpToolRegistry {
                                         "orgName", string("Organization name."),
                                         "name", string("Project name."),
                                         "description", string("Project description."),
-                                        "visibility", stringEnum("Project visibility.", "PUBLIC", "PRIVATE"),
+                                        "visibility",
+                                                stringEnum(
+                                                        "Project visibility. Defaults to PRIVATE.",
+                                                        "PUBLIC",
+                                                        "PRIVATE"),
                                         "meta", object("Project metadata."),
                                         "cfg", object("Project configuration.")),
                                 "orgName",
@@ -100,7 +108,9 @@ public class McpToolRegistry {
                                         "data", string("Secret data as UTF-8 text."),
                                         "dataBase64", string("Secret data as base64-encoded bytes."),
                                         "storePassword", string("Optional secret store password."),
-                                        "visibility", stringEnum("Secret visibility.", "PUBLIC", "PRIVATE"),
+                                        "visibility",
+                                                stringEnum(
+                                                        "Secret visibility. Defaults to PRIVATE.", "PUBLIC", "PRIVATE"),
                                         "storeType", string("Secret store type."),
                                         "projectIds", stringArray("Project UUIDs to link."),
                                         "projectNames", stringArray("Project names to link.")),
@@ -117,7 +127,9 @@ public class McpToolRegistry {
                                         "username", string("Secret username."),
                                         "password", string("Secret password."),
                                         "storePassword", string("Optional secret store password."),
-                                        "visibility", stringEnum("Secret visibility.", "PUBLIC", "PRIVATE"),
+                                        "visibility",
+                                                stringEnum(
+                                                        "Secret visibility. Defaults to PRIVATE.", "PUBLIC", "PRIVATE"),
                                         "storeType", string("Secret store type."),
                                         "projectIds", stringArray("Project UUIDs to link."),
                                         "projectNames", stringArray("Project names to link.")),
@@ -140,7 +152,9 @@ public class McpToolRegistry {
                                                 string(
                                                         "Private key. Omit both publicKey and privateKey to generate a pair."),
                                         "storePassword", string("Optional secret store password."),
-                                        "visibility", stringEnum("Secret visibility.", "PUBLIC", "PRIVATE"),
+                                        "visibility",
+                                                stringEnum(
+                                                        "Secret visibility. Defaults to PRIVATE.", "PUBLIC", "PRIVATE"),
                                         "storeType", string("Secret store type."),
                                         "projectIds", stringArray("Project UUIDs to link."),
                                         "projectNames", stringArray("Project names to link.")),
