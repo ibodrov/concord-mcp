@@ -37,7 +37,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-        <concord.version>2.38.0</concord.version>
+        <concord.version>2.40.0</concord.version>
         <docker.allowPull>true</docker.allowPull>
         <docker.server.tagbase>ibodrov/concord-mcp-server</docker.server.tagbase>
         <docker.server.image>${docker.server.tagbase}:${project.version}</docker.server.image>
@@ -81,6 +81,11 @@
         <dependency>
             <groupId>org.jboss.spec.javax.ws.rs</groupId>
             <artifactId>jboss-jaxrs-api_2.1_spec</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jboss.resteasy</groupId>
+            <artifactId>resteasy-multipart-provider</artifactId>
             <scope>provided</scope>
         </dependency>
         <dependency>

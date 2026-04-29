@@ -23,127 +23,85 @@ package ca.ibodrov.concord.mcp;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.walmartlabs.concord.common.ConfigurationUtils;
-import com.walmartlabs.concord.common.ObjectMapperProvider;
 import com.walmartlabs.concord.sdk.Constants;
-import com.walmartlabs.concord.server.org.OrganizationDao;
-import com.walmartlabs.concord.server.org.ResourceAccessLevel;
-import com.walmartlabs.concord.server.org.project.ProjectAccessManager;
-import com.walmartlabs.concord.server.org.project.ProjectDao;
-import com.walmartlabs.concord.server.org.project.RepositoryDao;
 import com.walmartlabs.concord.server.process.Payload;
-import com.walmartlabs.concord.server.process.PayloadBuilder;
+import com.walmartlabs.concord.server.process.PayloadManager;
+import com.walmartlabs.concord.server.process.ProcessAccessManager;
+import com.walmartlabs.concord.server.process.ProcessDataInclude;
 import com.walmartlabs.concord.server.process.ProcessEntry;
 import com.walmartlabs.concord.server.process.ProcessManager;
-import com.walmartlabs.concord.server.process.queue.ProcessQueueManager;
 import com.walmartlabs.concord.server.sdk.ConcordApplicationException;
-import com.walmartlabs.concord.server.sdk.PartialProcessKey;
-import com.walmartlabs.concord.server.sdk.ProcessKey;
-import com.walmartlabs.concord.server.security.Roles;
-import com.walmartlabs.concord.server.security.UnauthorizedException;
-import com.walmartlabs.concord.server.security.UserPrincipal;
-import com.walmartlabs.concord.server.security.sessionkey.SessionKeyPrincipal;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.io.InputStream;
+import java.lang.reflect.Type;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import javax.inject.Inject;
 import javax.servlet.http.HttpServletRequest;
+import javax.ws.rs.core.GenericType;
+import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.MultivaluedHashMap;
+import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
+import org.jboss.resteasy.plugins.providers.multipart.InputPart;
+import org.jboss.resteasy.plugins.providers.multipart.MultipartInput;
 
 class ConcordProcessTools {
 
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapperProvider().get();
     private static final int MAX_PARTS = positiveIntegerProperty("concord.mcp.maxProcessParts", 64);
     private static final int MAX_PART_BYTES =
             positiveIntegerProperty("concord.mcp.maxProcessPartBytes", 16 * 1024 * 1024);
     private static final int MAX_TOTAL_PART_BYTES =
             positiveIntegerProperty("concord.mcp.maxProcessTotalBytes", 64 * 1024 * 1024);
+    private static final Set<ProcessDataInclude> PROCESS_DATA_INCLUDES = Set.of();
 
-    private final OrganizationDao orgDao;
-    private final ProjectDao projectDao;
-    private final RepositoryDao repositoryDao;
+    private final PayloadManager payloadManager;
     private final ProcessManager processManager;
-    private final ProcessQueueManager processQueueManager;
-    private final ProjectAccessManager projectAccessManager;
+    private final ProcessAccessManager processAccessManager;
 
     @Inject
     ConcordProcessTools(
-            OrganizationDao orgDao,
-            ProjectDao projectDao,
-            RepositoryDao repositoryDao,
-            ProcessManager processManager,
-            ProcessQueueManager processQueueManager,
-            ProjectAccessManager projectAccessManager) {
+            PayloadManager payloadManager, ProcessManager processManager, ProcessAccessManager processAccessManager) {
 
-        this.orgDao = orgDao;
-        this.projectDao = projectDao;
-        this.repositoryDao = repositoryDao;
+        this.payloadManager = payloadManager;
         this.processManager = processManager;
-        this.processQueueManager = processQueueManager;
-        this.projectAccessManager = projectAccessManager;
+        this.processAccessManager = processAccessManager;
     }
 
     ProcessStartResult startProcess(Map<String, Object> arguments, HttpServletRequest request) {
-        var parts = parseParts(arguments.get("parts"));
-        if (parts.isEmpty()) {
+        var input = parseParts(arguments.get("parts"));
+        if (input.getParts().isEmpty()) {
             throw new IllegalArgumentException("'parts' must contain at least one part");
         }
 
-        if (Boolean.parseBoolean(stringPart(parts, Constants.Multipart.SYNC))) {
+        if (Boolean.parseBoolean(input.stringPart(Constants.Multipart.SYNC))) {
             throw new ConcordApplicationException(
                     "Synchronous process start is not supported", Response.Status.BAD_REQUEST);
         }
 
-        var processKey = PartialProcessKey.create();
-        var parentInstanceId = uuidPart(parts, Constants.Multipart.PARENT_INSTANCE_ID);
-        var orgId = orgId(parts);
-        var projectId = projectId(parts, orgId);
-        var repoId = repoId(parts, projectId);
-        if (repoId != null && projectId == null) {
-            projectId = repositoryDao.getProjectId(repoId);
-        }
-
-        var entryPoint = stringPart(parts, Constants.Multipart.ENTRY_POINT);
-        var out = outExpressions(parts);
-        var meta = meta(parts);
-        var initiator = UserPrincipal.assertCurrent();
-
         try {
-            var payload = PayloadBuilder.start(processKey)
-                    .parentInstanceId(parentInstanceId)
-                    .configuration(configuration(parts))
-                    .organization(orgId)
-                    .project(projectId)
-                    .repository(repoId)
-                    .entryPoint(entryPoint)
-                    .outExpressions(out)
-                    .initiator(initiator.getId(), initiator.getUsername())
-                    .meta(meta)
-                    .request(request)
-                    .build();
-
-            payload = addAttachments(payload, parts);
+            var payload = payloadManager.createPayload(input, request);
             var result = processManager.start(payload);
-            var process = processQueueManager.get(PartialProcessKey.from(result.getInstanceId()));
+            var process = processAccessManager.assertAccess(result.getInstanceId(), PROCESS_DATA_INCLUDES);
 
             return ProcessStartResult.started(
-                    result.getInstanceId().toString(), orgId, projectId, repoId, entryPoint, process);
+                    result.getInstanceId().toString(),
+                    payload.getHeader(Payload.ORGANIZATION_ID),
+                    payload.getHeader(Payload.PROJECT_ID),
+                    payload.getHeader(Payload.REPOSITORY_ID),
+                    payload.getHeader(Payload.ENTRY_POINT),
+                    process);
         } catch (IOException e) {
             throw new ConcordApplicationException("Error while creating process payload: " + e.getMessage(), e);
+        } finally {
+            input.close();
         }
     }
 
@@ -155,174 +113,15 @@ class ConcordProcessTools {
     }
 
     ProcessEntry assertProcess(UUID instanceId) {
-        var process = getProcessEntry(instanceId);
-        assertProcessAccess(process);
-        return process;
+        return processAccessManager.assertAccess(instanceId, PROCESS_DATA_INCLUDES);
     }
 
     ProcessEntry getProcessEntry(UUID instanceId) {
-        var process = processQueueManager.get(PartialProcessKey.from(instanceId), Collections.emptySet());
-        if (process == null) {
-            throw new ConcordApplicationException(
-                    "Process instance not found: " + instanceId, Response.Status.NOT_FOUND);
-        }
-        return process;
-    }
-
-    private void assertProcessAccess(ProcessEntry process) {
-        if (Roles.isAdmin() || Roles.isGlobalReader()) {
-            return;
-        }
-
-        var current = UserPrincipal.assertCurrent();
-        if (current.getId().equals(process.initiatorId())) {
-            return;
-        }
-
-        var sessionKey = SessionKeyPrincipal.getCurrent();
-        if (sessionKey != null) {
-            var processKey = new ProcessKey(process.instanceId(), process.createdAt());
-            if (processKey.partOf(sessionKey.getProcessKey())) {
-                return;
-            }
-        }
-
-        if (process.projectId() != null) {
-            projectAccessManager.assertAccess(
-                    process.orgId(), process.projectId(), null, ResourceAccessLevel.READER, false);
-            return;
-        }
-
-        throw new UnauthorizedException(
-                "User '" + current.getUsername() + "' is not authorized to access process " + process.instanceId());
-    }
-
-    private static Map<String, Object> configuration(List<Part> parts) {
-        var cfg = new LinkedHashMap<String, Object>();
-        for (var part : parts) {
-            if (!part.isTextPlain()) {
-                continue;
-            }
-
-            var nested = ConfigurationUtils.toNested(part.name(), part.stringValue());
-            cfg = new LinkedHashMap<>(ConfigurationUtils.deepMerge(cfg, nested));
-        }
-        return cfg;
-    }
-
-    private static Payload addAttachments(Payload payload, List<Part> parts) throws IOException {
-        var attachments = new LinkedHashMap<String, Path>();
-        var baseDir = payload.getHeader(Payload.BASE_DIR);
-        if (baseDir == null) {
-            throw new IllegalStateException("Payload base directory is not initialized");
-        }
-
-        for (var part : parts) {
-            if (part.isTextPlain()) {
-                continue;
-            }
-
-            var target = baseDir.resolve(part.name()).normalize();
-            if (!target.startsWith(baseDir)) {
-                throw new IllegalArgumentException("Invalid attachment name: " + part.name());
-            }
-
-            Files.createDirectories(target.getParent());
-            try (var in = new ByteArrayInputStream(part.data())) {
-                Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
-            }
-            attachments.put(part.name(), target);
-        }
-
-        return payload.putAttachments(attachments);
-    }
-
-    private UUID orgId(List<Part> parts) {
-        var orgId = uuidPart(parts, Constants.Multipart.ORG_ID);
-        var orgName = stringPart(parts, Constants.Multipart.ORG_NAME);
-        if (orgId == null && orgName != null) {
-            orgId = orgDao.getId(orgName);
-            if (orgId == null) {
-                throw new ConcordApplicationException("Organization not found: " + orgName, Response.Status.NOT_FOUND);
-            }
-        }
-        return orgId;
-    }
-
-    private UUID projectId(List<Part> parts, UUID orgId) {
-        var projectId = uuidPart(parts, Constants.Multipart.PROJECT_ID);
-        var projectName = stringPart(parts, Constants.Multipart.PROJECT_NAME);
-        if (projectId == null && projectName != null) {
-            if (orgId == null) {
-                throw new IllegalArgumentException("Organization ID or name is required");
-            }
-
-            projectId = projectDao.getId(orgId, projectName);
-            if (projectId == null) {
-                throw new ConcordApplicationException("Project not found: " + projectName, Response.Status.NOT_FOUND);
-            }
-        }
-        return projectId;
-    }
-
-    private UUID repoId(List<Part> parts, UUID projectId) {
-        var repoId = uuidPart(parts, Constants.Multipart.REPO_ID);
-        var repoName = stringPart(parts, Constants.Multipart.REPO_NAME);
-        if (repoId == null && repoName != null) {
-            if (projectId == null) {
-                throw new IllegalArgumentException("Project ID or name is required");
-            }
-
-            repoId = repositoryDao.getId(projectId, repoName);
-            if (repoId == null) {
-                throw new ConcordApplicationException("Repository not found: " + repoName, Response.Status.NOT_FOUND);
-            }
-        }
-        return repoId;
-    }
-
-    private static String[] outExpressions(List<Part> parts) {
-        var value = stringPart(parts, Constants.Multipart.OUT_EXPR);
-        return value != null ? value.split(",") : null;
-    }
-
-    private static Map<String, Object> meta(List<Part> parts) {
-        var value = stringPart(parts, Constants.Multipart.META);
-        if (value == null) {
-            return Collections.emptyMap();
-        }
-
-        try {
-            return value.isBlank() ? Collections.emptyMap() : OBJECT_MAPPER.readValue(value, MAP_TYPE);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("'meta' must be a JSON object");
-        }
-    }
-
-    private static UUID uuidPart(List<Part> parts, String name) {
-        var value = stringPart(parts, name);
-        if (value == null) {
-            return null;
-        }
-        try {
-            return UUID.fromString(value);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("'" + name + "' must be a UUID");
-        }
-    }
-
-    private static String stringPart(List<Part> parts, String name) {
-        for (var part : parts) {
-            if (part.name().equalsIgnoreCase(name)) {
-                var value = part.stringValue();
-                return value.isEmpty() ? null : value;
-            }
-        }
-        return null;
+        return processAccessManager.assertAccess(instanceId, PROCESS_DATA_INCLUDES);
     }
 
     @SuppressWarnings("unchecked")
-    private static List<Part> parseParts(Object value) {
+    private static McpMultipartInput parseParts(Object value) {
         if (!(value instanceof List<?> list)) {
             throw new IllegalArgumentException("'parts' must be an array");
         }
@@ -331,7 +130,7 @@ class ConcordProcessTools {
             throw new IllegalArgumentException("'parts' must contain at most " + MAX_PARTS + " entries");
         }
 
-        var result = new ArrayList<Part>(list.size());
+        var result = new ArrayList<InputPart>(list.size());
         var totalBytes = 0L;
         for (var item : list) {
             if (!(item instanceof Map<?, ?> raw)) {
@@ -339,25 +138,26 @@ class ConcordProcessTools {
             }
 
             var part = parsePart((Map<String, Object>) raw);
-            if (part.data().length > MAX_PART_BYTES) {
+            if (part.data.length > MAX_PART_BYTES) {
                 throw new IllegalArgumentException(
-                        "Part '" + part.name() + "' exceeds the " + MAX_PART_BYTES + " byte limit");
+                        "Part '" + part.name + "' exceeds the " + MAX_PART_BYTES + " byte limit");
             }
 
-            totalBytes += part.data().length;
+            totalBytes += part.data.length;
             if (totalBytes > MAX_TOTAL_PART_BYTES) {
                 throw new IllegalArgumentException("'parts' exceed the " + MAX_TOTAL_PART_BYTES + " byte total limit");
             }
             result.add(part);
         }
-        return List.copyOf(result);
+        return new McpMultipartInput(List.copyOf(result));
     }
 
-    private static Part parsePart(Map<String, Object> raw) {
+    private static McpInputPart parsePart(Map<String, Object> raw) {
         var name = requireString(raw, "name");
         validateAttachmentName(name);
 
         var contentType = optionalString(raw, "contentType");
+        var contentTypeFromMessage = contentType != null && !contentType.isBlank();
         if (contentType == null || contentType.isBlank()) {
             contentType = MediaType.TEXT_PLAIN;
         }
@@ -369,7 +169,7 @@ class ConcordProcessTools {
         }
 
         var data = text != null ? text.getBytes(UTF_8) : decodeBase64(name, base64, MAX_PART_BYTES);
-        return new Part(name, MediaType.valueOf(contentType), data);
+        return new McpInputPart(name, MediaType.valueOf(contentType), contentTypeFromMessage, data);
     }
 
     private static byte[] decodeBase64(String name, String base64, int maxBytes) {
@@ -392,6 +192,9 @@ class ConcordProcessTools {
         if (name.isBlank()
                 || name.startsWith("/")
                 || name.contains("..")
+                || name.contains("\"")
+                || name.contains("\r")
+                || name.contains("\n")
                 || name.indexOf('\0') >= 0
                 || Paths.get(name).isAbsolute()) {
             throw new IllegalArgumentException("Invalid attachment name: " + name);
@@ -514,14 +317,109 @@ class ConcordProcessTools {
         }
     }
 
-    private record Part(String name, MediaType mediaType, byte[] data) {
+    private record McpMultipartInput(List<InputPart> parts) implements MultipartInput {
 
-        boolean isTextPlain() {
-            return mediaType.isCompatible(MediaType.TEXT_PLAIN_TYPE);
+        @Override
+        public List<InputPart> getParts() {
+            return parts;
         }
 
-        String stringValue() {
+        @Override
+        public String getPreamble() {
+            return null;
+        }
+
+        @Override
+        public void close() {
+            // In-memory parts do not allocate temporary files.
+        }
+
+        String stringPart(String name) {
+            for (var part : parts) {
+                if (!(part instanceof McpInputPart inputPart) || !inputPart.hasName(name)) {
+                    continue;
+                }
+
+                try {
+                    var value = part.getBodyAsString();
+                    return value.isEmpty() ? null : value;
+                } catch (IOException e) {
+                    throw new IllegalArgumentException("Error reading part '" + name + "': " + e.getMessage());
+                }
+            }
+            return null;
+        }
+    }
+
+    private static final class McpInputPart implements InputPart {
+
+        private final String name;
+        private final boolean contentTypeFromMessage;
+        private final byte[] data;
+        private MediaType mediaType;
+        private MultivaluedMap<String, String> headers;
+
+        private McpInputPart(String name, MediaType mediaType, boolean contentTypeFromMessage, byte[] data) {
+            this.name = name;
+            this.mediaType = mediaType;
+            this.contentTypeFromMessage = contentTypeFromMessage;
+            this.data = data;
+        }
+
+        boolean hasName(String value) {
+            return name.equalsIgnoreCase(value);
+        }
+
+        @Override
+        public MultivaluedMap<String, String> getHeaders() {
+            if (headers == null) {
+                headers = new MultivaluedHashMap<>();
+                headers.putSingle(HttpHeaders.CONTENT_DISPOSITION, "form-data; name=\"" + name + "\"");
+                headers.putSingle(HttpHeaders.CONTENT_TYPE, mediaType.toString());
+            }
+            return headers;
+        }
+
+        @Override
+        public String getBodyAsString() {
             return new String(data, UTF_8).trim();
+        }
+
+        @Override
+        public <T> T getBody(Class<T> type, Type genericType) throws IOException {
+            if (InputStream.class.equals(type)) {
+                return type.cast(new ByteArrayInputStream(data));
+            }
+            if (String.class.equals(type)) {
+                return type.cast(getBodyAsString());
+            }
+            if (byte[].class.equals(type)) {
+                return type.cast(data.clone());
+            }
+            throw new IOException("Unsupported multipart body type: " + type);
+        }
+
+        @Override
+        public <T> T getBody(GenericType<T> type) throws IOException {
+            @SuppressWarnings("unchecked")
+            var rawType = (Class<T>) type.getRawType();
+            return getBody(rawType, type.getType());
+        }
+
+        @Override
+        public MediaType getMediaType() {
+            return mediaType;
+        }
+
+        @Override
+        public boolean isContentTypeFromMessage() {
+            return contentTypeFromMessage;
+        }
+
+        @Override
+        public void setMediaType(MediaType mediaType) {
+            this.mediaType = mediaType;
+            this.headers = null;
         }
     }
 }
