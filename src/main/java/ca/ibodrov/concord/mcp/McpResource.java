@@ -2,7 +2,7 @@ package ca.ibodrov.concord.mcp;
 
 /*-
  * ~~~~~~
- * Concord MCP Server Plugin
+ * MCP Server Plugin for Concord
  * ------
  * Copyright (C) 2026 Ivan Bodrov <ibodrov@gmail.com>
  * ------
@@ -55,7 +55,7 @@ public class McpResource implements Resource {
     private static final String X_ACCEL_BUFFERING_HEADER = "X-Accel-Buffering";
     private static final String TRUSTED_FORWARDED_PROXIES_PROPERTY = "concord.mcp.trustedForwardedProxies";
     private static final String DEFAULT_PROTOCOL_VERSION = "2025-06-18";
-    private static final String SERVER_NAME = "concord-mcp-server";
+    private static final String SERVER_NAME = "mcp-for-concord";
     private static final String SERVER_VERSION = serverVersion();
     private static final List<String> SUPPORTED_PROTOCOL_VERSIONS =
             List.of("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05");

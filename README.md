@@ -1,6 +1,6 @@
-# Concord MCP Server Plugin
+# MCP Server Plugin for Concord
 
-Concord MCP Server Plugin is a `concord-server` plugin that exposes Concord operations
+MCP Server Plugin for Concord is a `concord-server` plugin that exposes Concord operations
 through the Model Context Protocol (MCP), including process inspection, process log access,
 process submission, and CRUD-style operations for Concord organizations, projects,
 repositories, secrets, inventories, JSON stores, and related resources.

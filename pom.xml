@@ -4,13 +4,13 @@
 
     <modelVersion>4.0.0</modelVersion>
     <groupId>ca.ibodrov.concord</groupId>
-    <artifactId>concord-mcp-server</artifactId>
+    <artifactId>mcp-for-concord</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>jar</packaging>
 
-    <name>Concord MCP Server Plugin</name>
+    <name>MCP Server Plugin for Concord</name>
     <description>MCP support plugin for Concord Server.</description>
-    <url>https://github.com/ibodrov/concord-mcp</url>
+    <url>https://github.com/ibodrov/mcp-for-concord</url>
 
     <licenses>
         <license>
@@ -39,7 +39,7 @@
 
         <concord.version>2.40.0</concord.version>
         <docker.allowPull>true</docker.allowPull>
-        <docker.server.tagbase>ibodrov/concord-mcp-server</docker.server.tagbase>
+        <docker.server.tagbase>ibodrov/mcp-for-concord</docker.server.tagbase>
         <docker.server.image>${docker.server.tagbase}:${project.version}</docker.server.image>
         <docker.build.context>.</docker.build.context>
         <docker.buildx.builder>default</docker.buildx.builder>
@@ -224,7 +224,7 @@
                     <processEndTag>======</processEndTag>
                     <licenseName>apache_v2</licenseName>
                     <organizationName>Ivan Bodrov &lt;ibodrov@gmail.com&gt;</organizationName>
-                    <projectName>Concord MCP Server Plugin</projectName>
+                    <projectName>MCP Server Plugin for Concord</projectName>
                     <inceptionYear>2026</inceptionYear>
                     <roots>
                         <root>src/main/java</root>
@@ -251,8 +251,8 @@
 
     <scm>
         <url>${project.url}</url>
-        <connection>scm:git:https://github.com/ibodrov/concord-mcp.git</connection>
-        <developerConnection>scm:git:${project.url}</developerConnection>
+        <connection>scm:git:git@github.com:ibodrov/mcp-for-concord.git</connection>
+        <developerConnection>scm:git:git@github.com:ibodrov/mcp-for-concord.git</developerConnection>
         <tag>HEAD</tag>
     </scm>
 

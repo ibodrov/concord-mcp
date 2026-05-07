@@ -2,7 +2,7 @@ package ca.ibodrov.concord.mcp;
 
 /*-
  * ~~~~~~
- * Concord MCP Server Plugin
+ * MCP Server Plugin for Concord
  * ------
  * Copyright (C) 2026 Ivan Bodrov <ibodrov@gmail.com>
  * ------
@@ -89,7 +89,7 @@ public class McpResourceLocalIT {
                         "protocolVersion",
                         "2025-06-18",
                         "clientInfo",
-                        Map.of("name", "concord-mcp-it", "version", "0.0.1")));
+                        Map.of("name", "mcp-for-concord-it", "version", "0.0.1")));
         var initializeResult = object(initialize.get("result"));
         assertEquals("2025-06-18", initializeResult.get("protocolVersion"));
 
@@ -119,7 +119,7 @@ public class McpResourceLocalIT {
                         "name",
                         "mcp-it-repo",
                         "url",
-                        "https://example.com/concord-mcp-it.git",
+                        "https://example.com/mcp-for-concord-it.git",
                         "branch",
                         "main",
                         "disabled",

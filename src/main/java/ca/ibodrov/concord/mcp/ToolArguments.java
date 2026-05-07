@@ -2,7 +2,7 @@ package ca.ibodrov.concord.mcp;
 
 /*-
  * ~~~~~~
- * Concord MCP Server Plugin
+ * MCP Server Plugin for Concord
  * ------
  * Copyright (C) 2026 Ivan Bodrov <ibodrov@gmail.com>
  * ------
