@@ -1,1 +1,2 @@
+- Use Java 17 for this project, `sdkman` might be used on some platforms to switch between JDKs.
 - Prefer Java `var` syntax.
