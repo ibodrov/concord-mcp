@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>ca.ibodrov.concord</groupId>
     <artifactId>mcp-for-concord</artifactId>
-    <version>0.0.1</version>
+    <version>0.0.2-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>MCP Server Plugin for Concord</name>
@@ -252,7 +252,7 @@
         <url>${project.url}</url>
         <connection>scm:git:git@github.com:ibodrov/mcp-for-concord.git</connection>
         <developerConnection>scm:git:git@github.com:ibodrov/mcp-for-concord.git</developerConnection>
-        <tag>0.0.1</tag>
+        <tag>HEAD</tag>
     </scm>
 
     <profiles>
