@@ -62,6 +62,7 @@ class ConcordUserTools {
         var domain = args.optionalString("domain");
         var type = creatableUserType(args);
         var roles = optionalRoles(arguments, "roles");
+        assertNoAdminRole(roles);
         var disabled = optionalBoolean(arguments, "disabled");
 
         var existingUserId = userManager.getId(username, domain, type).orElse(null);
@@ -125,6 +126,7 @@ class ConcordUserTools {
         if (roles == null) {
             throw new IllegalArgumentException("'roles' is required");
         }
+        assertNoAdminRole(roles);
 
         userDao.updateRoles(userId, roles);
         return UserResult.from(OperationResult.UPDATED, requireUser(userId));
@@ -221,6 +223,12 @@ class ConcordUserTools {
     private static void assertAdmin() {
         if (!Roles.isAdmin()) {
             throw new UnauthorizedException("Only Concord administrators can manage users");
+        }
+    }
+
+    private static void assertNoAdminRole(Set<String> roles) {
+        if (roles != null && roles.contains(Roles.ADMIN)) {
+            throw new UnauthorizedException("MCP user-management tools cannot assign Concord administrator roles");
         }
     }
 

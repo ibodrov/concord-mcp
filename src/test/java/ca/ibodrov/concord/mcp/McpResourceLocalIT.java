@@ -165,6 +165,16 @@ public class McpResourceLocalIT {
         var tools = postMcp("tools/list", Map.of());
         assertTrue(
                 object(tools.get("result")).get("tools").toString().contains("concord_create_user"), tools.toString());
+        assertTrue(
+                object(tools.get("result")).get("tools").toString().contains("concord_create_api_key"),
+                tools.toString());
+
+        var rejectedAdminUser = callToolError(
+                "concord_create_user",
+                Map.of("username", "mcp-it-admin-user", "type", "LOCAL", "roles", List.of("concordAdmin")));
+        assertTrue(
+                rejectedAdminUser.get("error").toString().contains("cannot assign Concord administrator roles"),
+                rejectedAdminUser.toString());
 
         var created = callTool(
                 "concord_create_user",
@@ -195,6 +205,43 @@ public class McpResourceLocalIT {
                 Map.of("username", "mcp-it-managed-user", "type", "LOCAL", "roles", List.of("concordSystemWriter")));
         assertTrue(roleNames(roles).contains("concordSystemWriter"), roles.toString());
         assertFalse(roleNames(roles).contains("concordSystemReader"), roles.toString());
+
+        var rejectedAdminRole = callToolError(
+                "concord_set_user_roles",
+                Map.of("username", "mcp-it-managed-user", "type", "LOCAL", "roles", List.of("concordAdmin")));
+        assertTrue(
+                rejectedAdminRole.get("error").toString().contains("cannot assign Concord administrator roles"),
+                rejectedAdminRole.toString());
+
+        var apiKey = callTool(
+                "concord_create_api_key",
+                Map.of("username", "mcp-it-managed-user", "type", "LOCAL", "name", "mcp-it-key"));
+        assertEquals("apiKey", apiKey.get("entity"));
+        assertEquals("CREATED", apiKey.get("result"));
+        assertEquals(userId, apiKey.get("userId"));
+        assertEquals("mcp-it-key", apiKey.get("name"));
+        assertNotNull(apiKey.get("key"));
+        var keyId = apiKey.get("keyId").toString();
+        var keyValue = apiKey.get("key").toString();
+
+        var apiKeys = callTool("concord_list_api_keys", Map.of("userId", userId));
+        assertTrue(
+                list(apiKeys.get("apiKeys")).stream()
+                        .map(McpResourceLocalIT::object)
+                        .anyMatch(k -> keyId.equals(k.get("keyId"))),
+                apiKeys.toString());
+        assertFalse(apiKeys.toString().contains(keyValue), apiKeys.toString());
+
+        var rotated = callTool(
+                "concord_create_or_update_api_key",
+                Map.of("username", "mcp-it-managed-user", "type", "LOCAL", "name", "mcp-it-key"));
+        assertEquals("UPDATED", rotated.get("result"));
+        assertEquals(keyId, rotated.get("keyId"));
+        assertTrue(rotated.containsKey("key"), rotated.toString());
+        assertFalse(keyValue.equals(rotated.get("key")), rotated.toString());
+
+        var deletedKey = callTool("concord_delete_api_key", Map.of("keyId", keyId));
+        assertEquals("DELETED", deletedKey.get("result"));
 
         var disabled = callTool("concord_disable_user", Map.of("userId", userId));
         assertEquals(true, disabled.get("disabled"));

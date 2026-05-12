@@ -3,14 +3,17 @@
 MCP Server Plugin for Concord is a `concord-server` plugin that exposes Concord operations
 through the Model Context Protocol (MCP), including process inspection, process log access,
 process submission, and CRUD-style operations for Concord organizations, projects,
-repositories, secrets, users, inventories, JSON stores, and related resources.
+repositories, secrets, users, API keys, inventories, JSON stores, and related resources.
 
 The plugin uses regular Concord authentication and authorization. MCP clients can only access
 Concord resources allowed by the Concord user, API key, or session credentials used for the
 request.
 
 User-management tools require Concord administrator privileges on the credentials used for
-the MCP request.
+the MCP request. MCP user-management tools refuse to assign Concord administrator roles.
+
+API-key tools use Concord's normal API key ownership and permission checks. The generated key
+value is returned only from create or rotate operations; list operations never return key values.
 
 ## Configuration
 

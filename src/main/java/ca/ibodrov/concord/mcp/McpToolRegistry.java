@@ -45,6 +45,7 @@ public class McpToolRegistry {
     McpToolRegistry(
             ConcordCrudTools crudTools,
             ConcordUserTools userTools,
+            ConcordApiKeyTools apiKeyTools,
             ConcordProcessTools processTools,
             ConcordLogTools logTools) {
         var crudToolList = List.of(
@@ -246,6 +247,58 @@ public class McpToolRegistry {
                                 "type", stringEnum("User type for username lookup.", "LOCAL", "LDAP", "SSO"))),
                         userTools::deleteUser));
 
+        var apiKeyToolList = List.of(
+                tool(
+                        "concord_create_api_key",
+                        "Create a Concord API key. The generated key value is returned once. Admins can create keys for other users; non-admins can create keys only for themselves.",
+                        objectSchema(
+                                properties(
+                                        "userId",
+                                                string("Owner user UUID. Omit userId and username to use the caller."),
+                                        "username",
+                                                string("Owner username. Omit userId and username to use the caller."),
+                                        "domain", string("Owner user domain."),
+                                        "type",
+                                                stringEnum(
+                                                        "Owner user type for username lookup.", "LOCAL", "LDAP", "SSO"),
+                                        "name", string("API key name. Omit to auto-generate one."),
+                                        "key",
+                                                string(
+                                                        "Optional explicit key value. Requires Concord's API_KEY_SPECIFY_VALUE permission."))),
+                        apiKeyTools::createApiKey),
+                tool(
+                        "concord_create_or_update_api_key",
+                        "Create or rotate a Concord API key by owner and name. The new key value is returned once. Admins can manage keys for other users; non-admins can manage only their own keys.",
+                        objectSchema(
+                                properties(
+                                        "userId",
+                                                string("Owner user UUID. Omit userId and username to use the caller."),
+                                        "username",
+                                                string("Owner username. Omit userId and username to use the caller."),
+                                        "domain", string("Owner user domain."),
+                                        "type",
+                                                stringEnum(
+                                                        "Owner user type for username lookup.", "LOCAL", "LDAP", "SSO"),
+                                        "name", string("API key name. Omit to auto-generate one."),
+                                        "key",
+                                                string(
+                                                        "Optional explicit key value. Requires Concord's API_KEY_SPECIFY_VALUE permission."))),
+                        apiKeyTools::createOrUpdateApiKey),
+                tool(
+                        "concord_list_api_keys",
+                        "List Concord API keys for a user. Key values are never returned. Admins can list other users' keys; non-admins can list only their own keys.",
+                        objectSchema(properties(
+                                "userId", string("Owner user UUID. Omit userId and username to use the caller."),
+                                "username", string("Owner username. Omit userId and username to use the caller."),
+                                "domain", string("Owner user domain."),
+                                "type", stringEnum("Owner user type for username lookup.", "LOCAL", "LDAP", "SSO"))),
+                        apiKeyTools::listApiKeys),
+                tool(
+                        "concord_delete_api_key",
+                        "Delete a Concord API key by keyId. Admins can delete other users' keys; non-admins can delete only their own keys.",
+                        objectSchema(properties("keyId", string("API key UUID.")), "keyId"),
+                        apiKeyTools::deleteApiKey));
+
         var processAndLogTools = List.of(
                 tool(
                         "concord_start_process",
@@ -336,10 +389,11 @@ public class McpToolRegistry {
                         (arguments, request) -> logTools.streamLog(arguments, null),
                         (arguments, request, writer) -> logTools.streamLog(arguments, writer)));
 
-        var allTools =
-                new java.util.ArrayList<McpTool>(crudToolList.size() + userToolList.size() + processAndLogTools.size());
+        var allTools = new java.util.ArrayList<McpTool>(
+                crudToolList.size() + userToolList.size() + apiKeyToolList.size() + processAndLogTools.size());
         allTools.addAll(crudToolList);
         allTools.addAll(userToolList);
+        allTools.addAll(apiKeyToolList);
         allTools.addAll(processAndLogTools);
         this.tools = List.copyOf(allTools);
 
